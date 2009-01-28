@@ -4,7 +4,7 @@
  *
  * Copyright (C) 1998 Andrew Tridgell
  * Copyright (C) 2002 Martin Pool
- * Copyright (C) 2003-2009 Wayne Davison
+ * Copyright (C) 2003-2008 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -152,11 +152,10 @@ int do_chmod(const char *path, mode_t mode)
 	int code;
 	if (dry_run) return 0;
 	RETURN_ERROR_IF_RO_OR_LO;
-#ifdef HAVE_LCHMOD
-	code = lchmod(path, mode & CHMOD_BITS);
-#else
 	if (S_ISLNK(mode)) {
-# if defined HAVE_SETATTRLIST
+#ifdef HAVE_LCHMOD
+		code = lchmod(path, mode & CHMOD_BITS);
+#elif defined HAVE_SETATTRLIST
 		struct attrlist attrList;
 		uint32_t m = mode & CHMOD_BITS; /* manpage is wrong: not mode_t! */
 
@@ -164,12 +163,11 @@ int do_chmod(const char *path, mode_t mode)
 		attrList.bitmapcount = ATTR_BIT_MAP_COUNT;
 		attrList.commonattr = ATTR_CMN_ACCESSMASK;
 		code = setattrlist(path, &attrList, &m, sizeof m, FSOPT_NOFOLLOW);
-# else
+#else
 		code = 1;
-# endif
+#endif
 	} else
 		code = chmod(path, mode & CHMOD_BITS); /* DISCOURAGED FUNCTION */
-#endif /* !HAVE_LCHMOD */
 	if (code != 0 && (preserve_perms || preserve_executability))
 		return code;
 	return 0;
@@ -182,22 +180,6 @@ int do_rename(const char *fname1, const char *fname2)
 	RETURN_ERROR_IF_RO_OR_LO;
 	return rename(fname1, fname2);
 }
-
-#ifdef HAVE_FTRUNCATE
-int do_ftruncate(int fd, OFF_T size)
-{
-	int ret;
-
-	if (dry_run) return 0;
-	RETURN_ERROR_IF_RO_OR_LO;
-
-	do {
-		ret = ftruncate(fd, size);
-	} while (ret < 0 && errno == EINTR);
-
-	return ret;
-}
-#endif
 
 void trim_trailing_slashes(char *name)
 {
@@ -300,77 +282,3 @@ OFF_T do_lseek(int fd, OFF_T offset, int whence)
 	return lseek(fd, offset, whence);
 #endif
 }
-
-#ifdef HAVE_UTIMENSAT
-int do_utimensat(const char *fname, time_t modtime, uint32 mod_nsec)
-{
-	struct timespec t[2];
-
-	if (dry_run) return 0;
-	RETURN_ERROR_IF_RO_OR_LO;
-
-	t[0].tv_sec = 0;
-	t[0].tv_nsec = UTIME_NOW;
-	t[1].tv_sec = modtime;
-	t[1].tv_nsec = mod_nsec;
-	return utimensat(AT_FDCWD, fname, t, AT_SYMLINK_NOFOLLOW);
-}
-#endif
-
-#ifdef HAVE_LUTIMES
-int do_lutimes(const char *fname, time_t modtime, uint32 mod_nsec)
-{
-	struct timeval t[2];
-
-	if (dry_run) return 0;
-	RETURN_ERROR_IF_RO_OR_LO;
-
-	t[0].tv_sec = time(NULL);
-	t[0].tv_usec = 0;
-	t[1].tv_sec = modtime;
-	t[1].tv_usec = mod_nsec / 1000;
-	return lutimes(fname, t);
-}
-#endif
-
-#ifdef HAVE_UTIMES
-int do_utimes(const char *fname, time_t modtime, uint32 mod_nsec)
-{
-	struct timeval t[2];
-
-	if (dry_run) return 0;
-	RETURN_ERROR_IF_RO_OR_LO;
-
-	t[0].tv_sec = time(NULL);
-	t[0].tv_usec = 0;
-	t[1].tv_sec = modtime;
-	t[1].tv_usec = mod_nsec / 1000;
-	return utimes(fname, t);
-}
-
-#elif defined HAVE_UTIME
-int do_utime(const char *fname, time_t modtime, UNUSED(uint32 mod_nsec))
-{
-#ifdef HAVE_STRUCT_UTIMBUF
-	struct utimbuf tbuf;
-#else
-	time_t t[2];
-#endif
-
-	if (dry_run) return 0;
-	RETURN_ERROR_IF_RO_OR_LO;
-
-# ifdef HAVE_STRUCT_UTIMBUF
-	tbuf.actime = time(NULL);
-	tbuf.modtime = modtime;
-	return utime(fname, &tbuf);
-# else
-	t[0] = time(NULL);
-	t[1] = modtime;
-	return utime(fname, t);
-# endif
-}
-
-#else
-#error Need utimes or utime function.
-#endif

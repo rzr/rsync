@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1998 Andrew Tridgell
  * Copyright (C) 2002 Martin Pool
- * Copyright (C) 2004-2009 Wayne Davison
+ * Copyright (C) 2004-2008 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,42 +27,38 @@
 
 extern int sparse_files;
 
-static OFF_T sparse_seek = 0;
+static char last_byte;
+static size_t sparse_seek = 0;
 
-int sparse_end(int f, OFF_T size)
+int sparse_end(int f)
 {
 	int ret;
 
 	if (!sparse_seek)
 		return 0;
 
-#ifdef HAVE_FTRUNCATE
-	ret = do_ftruncate(f, size);
-#else
-	if (do_lseek(f, sparse_seek-1, SEEK_CUR) != size-1)
-		ret = -1;
-	else {
-		do {
-			ret = write(f, "", 1);
-		} while (ret < 0 && errno == EINTR);
-
-		ret = ret <= 0 ? -1 : 0;
-	}
-#endif
-
+	do_lseek(f, sparse_seek-1, SEEK_CUR);
 	sparse_seek = 0;
 
-	return ret;
+	do {
+		ret = write(f, "", 1);
+	} while (ret < 0 && errno == EINTR);
+
+	return ret <= 0 ? -1 : 0;
 }
 
 
-static int write_sparse(int f, char *buf, int len)
+static int write_sparse(int f, char *buf, size_t len)
 {
-	int l1 = 0, l2 = 0;
+	size_t l1 = 0, l2 = 0;
 	int ret;
 
 	for (l1 = 0; l1 < len && buf[l1] == 0; l1++) {}
 	for (l2 = 0; l2 < len-l1 && buf[len-(l2+1)] == 0; l2++) {}
+
+	/* XXX Riddle me this: why does this function SLOW DOWN when I
+	 * remove the following (unneeded) line?? Core Duo weirdness? */
+	last_byte = buf[len-1];
 
 	sparse_seek += l1;
 
@@ -112,7 +108,7 @@ int flush_write_file(int f)
  * write_file does not allow incomplete writes.  It loops internally
  * until len bytes are written or errno is set.
  */
-int write_file(int f, char *buf, int len)
+int write_file(int f,char *buf,size_t len)
 {
 	int ret = 0;
 
@@ -129,7 +125,7 @@ int write_file(int f, char *buf, int len)
 				if (!wf_writeBuf)
 					out_of_memory("write_file");
 			}
-			r1 = (int)MIN((size_t)len, wf_writeBufSize - wf_writeBufCnt);
+			r1 = MIN(len, wf_writeBufSize - wf_writeBufCnt);
 			if (r1) {
 				memcpy(wf_writeBuf + wf_writeBufCnt, buf, r1);
 				wf_writeBufCnt += r1;

@@ -3,7 +3,7 @@
  *
  * Copyright (C) Andrew Tridgell 1996
  * Copyright (C) Paul Mackerras 1996
- * Copyright (C) 2004-2009 Wayne Davison
+ * Copyright (C) 2004-2008 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,8 +24,6 @@
 int remote_protocol = 0;
 int file_extra_cnt = 0; /* count of file-list extras that everyone gets */
 int inc_recurse = 0;
-int compat_flags = 0;
-int use_safe_inc_flist = 0;
 
 extern int verbose;
 extern int am_server;
@@ -75,7 +73,6 @@ int filesfrom_convert = 0;
 #define CF_INC_RECURSE	 (1<<0)
 #define CF_SYMLINK_TIMES (1<<1)
 #define CF_SYMLINK_ICONV (1<<2)
-#define CF_SAFE_FLIST	 (1<<3)
 
 static const char *client_info;
 
@@ -249,16 +246,15 @@ void setup_protocol(int f_out,int f_in)
 			exit_cleanup(RERR_PROTOCOL);
 		}
 	} else if (protocol_version >= 30) {
+		int compat_flags;
 		if (am_server) {
 			compat_flags = allow_inc_recurse ? CF_INC_RECURSE : 0;
-#ifdef CAN_SET_SYMLINK_TIMES
+#if defined HAVE_LUTIMES && defined HAVE_UTIMES
 			compat_flags |= CF_SYMLINK_TIMES;
 #endif
 #ifdef ICONV_OPTION
 			compat_flags |= CF_SYMLINK_ICONV;
 #endif
-			if (local_server || strchr(client_info, 'f') != NULL)
-				compat_flags |= CF_SAFE_FLIST;
 			write_byte(f_out, compat_flags);
 		} else
 			compat_flags = read_byte(f_in);
@@ -269,13 +265,13 @@ void setup_protocol(int f_out,int f_in)
 			    ? strchr(client_info, 'L') != NULL
 			    : !!(compat_flags & CF_SYMLINK_TIMES);
 		}
-#ifdef CAN_SET_SYMLINK_TIMES
+#if defined HAVE_LUTIMES && defined HAVE_UTIMES
 		else
 			receiver_symlink_times = 1;
 #endif
 #ifdef ICONV_OPTION
 		sender_symlink_iconv = iconv_opt && (am_server
-		    ? local_server || strchr(client_info, 's') != NULL
+		    ? strchr(client_info, 's') != NULL
 		    : !!(compat_flags & CF_SYMLINK_ICONV));
 #endif
 		if (inc_recurse && !allow_inc_recurse) {
@@ -285,9 +281,8 @@ void setup_protocol(int f_out,int f_in)
 			    read_batch ? "batch file" : "connection");
 			exit_cleanup(RERR_SYNTAX);
 		}
-		use_safe_inc_flist = !!(compat_flags & CF_SAFE_FLIST);
 		need_messages_from_generator = 1;
-#ifdef CAN_SET_SYMLINK_TIMES
+#if defined HAVE_LUTIMES && defined HAVE_UTIMES
 	} else if (!am_sender) {
 		receiver_symlink_times = 1;
 #endif

@@ -3,7 +3,7 @@
  * Written by Jay Fenlason, vaguely based on the ACLs patch.
  *
  * Copyright (C) 2004 Red Hat, Inc.
- * Copyright (C) 2006-2009 Wayne Davison
+ * Copyright (C) 2006-2008 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,9 +32,6 @@ extern int am_generator;
 extern int read_only;
 extern int list_only;
 extern int preserve_xattrs;
-extern int preserve_links;
-extern int preserve_devices;
-extern int preserve_specials;
 extern int checksum_seed;
 
 #define RSYNC_XAL_INITIAL 5
@@ -83,8 +80,6 @@ static char *namebuf = NULL;
 
 static item_list empty_xattr = EMPTY_ITEM_LIST;
 static item_list rsync_xal_l = EMPTY_ITEM_LIST;
-
-static size_t prior_xattr_count = (size_t)-1;
 
 /* ------------------------------------------------------------------------- */
 
@@ -141,7 +136,7 @@ static ssize_t get_xattr_names(const char *fname)
 		  got_error:
 			rsyserr(FERROR_XFER, errno,
 				"get_xattr_names: llistxattr(\"%s\",%.0f) failed",
-				full_fname(fname), arg);
+				fname, arg);
 			return -1;
 		}
 		list_len = sys_llistxattr(fname, NULL, 0);
@@ -177,7 +172,7 @@ static char *get_xattr_data(const char *fname, const char *name, size_t *len_ptr
 			return NULL;
 		rsyserr(FERROR_XFER, errno,
 			"get_xattr_data: lgetxattr(\"%s\",\"%s\",0) failed",
-			full_fname(fname), name);
+			fname, name);
 		return NULL;
 	}
 
@@ -194,11 +189,11 @@ static char *get_xattr_data(const char *fname, const char *name, size_t *len_ptr
 			if (len == (size_t)-1) {
 				rsyserr(FERROR_XFER, errno,
 				    "get_xattr_data: lgetxattr(\"%s\",\"%s\",%ld)"
-				    " failed", full_fname(fname), name, (long)datum_len);
+				    " failed", fname, name, (long)datum_len);
 			} else {
 				rprintf(FERROR_XFER,
 				    "get_xattr_data: lgetxattr(\"%s\",\"%s\",%ld)"
-				    " returned %ld\n", full_fname(fname), name,
+				    " returned %ld\n", fname, name,
 				    (long)datum_len, (long)len);
 			}
 			free(ptr);
@@ -286,26 +281,6 @@ int get_xattr(const char *fname, stat_x *sxp)
 {
 	sxp->xattr = new(item_list);
 	*sxp->xattr = empty_xattr;
-
-	if (S_ISREG(sxp->st.st_mode) || S_ISDIR(sxp->st.st_mode)) {
-		/* Everyone supports this. */
-	} else if (S_ISLNK(sxp->st.st_mode)) {
-#ifndef NO_SYMLINK_XATTRS
-		if (!preserve_links)
-#endif
-			return 0;
-	} else if (IS_SPECIAL(sxp->st.st_mode)) {
-#ifndef NO_SPECIAL_XATTRS
-		if (!preserve_specials)
-#endif
-			return 0;
-	} else if (IS_DEVICE(sxp->st.st_mode)) {
-#ifndef NO_DEVICE_XATTRS
-		if (!preserve_devices)
-#endif
-			return 0;
-	}
-
 	if (rsync_xal_get(fname, sxp->xattr) < 0) {
 		free_xattr(sxp);
 		return -1;
@@ -344,8 +319,8 @@ int copy_xattrs(const char *source, const char *dest)
 		if (sys_lsetxattr(dest, name, ptr, datum_len) < 0) {
 			int save_errno = errno ? errno : EINVAL;
 			rsyserr(FERROR_XFER, errno,
-				"copy_xattrs: lsetxattr(\"%s\",\"%s\") failed",
-				full_fname(dest), name);
+				"rsync_xal_set: lsetxattr(\"%s\",\"%s\") failed",
+				dest, name);
 			errno = save_errno;
 			return -1;
 		}
@@ -406,7 +381,7 @@ static void rsync_xal_store(item_list *xalp)
 }
 
 /* Send the make_xattr()-generated xattr list for this flist entry. */
-int send_xattr(int f, stat_x *sxp)
+int send_xattr(stat_x *sxp, int f)
 {
 	int ndx = find_matching_xattr(sxp->xattr);
 
@@ -597,7 +572,7 @@ int recv_xattr_request(struct file_struct *file, int f_in)
 
 	if (F_XATTR(file) < 0) {
 		rprintf(FERROR, "recv_xattr_request: internal data error!\n");
-		exit_cleanup(RERR_PROTOCOL);
+		exit_cleanup(RERR_STREAMIO);
 	}
 	lst += F_XATTR(file);
 
@@ -613,12 +588,12 @@ int recv_xattr_request(struct file_struct *file, int f_in)
 		if (!cnt || rxa->num != num) {
 			rprintf(FERROR, "[%s] could not find xattr #%d for %s\n",
 				who_am_i(), num, f_name(file, NULL));
-			exit_cleanup(RERR_PROTOCOL);
+			exit_cleanup(RERR_STREAMIO);
 		}
 		if (!XATTR_ABBREV(*rxa) || rxa->datum[0] != XSTATE_ABBREV) {
 			rprintf(FERROR, "[%s] internal abbrev error on %s (%s, len=%ld)!\n",
 				who_am_i(), f_name(file, NULL), rxa->name, (long)rxa->datum_len);
-			exit_cleanup(RERR_PROTOCOL);
+			exit_cleanup(RERR_STREAMIO);
 		}
 
 		if (am_sender) {
@@ -648,7 +623,7 @@ int recv_xattr_request(struct file_struct *file, int f_in)
 /* ------------------------------------------------------------------------- */
 
 /* receive and build the rsync_xattr_lists */
-void receive_xattr(int f, struct file_struct *file)
+void receive_xattr(struct file_struct *file, int f)
 {
 	static item_list temp_xattr = EMPTY_ITEM_LIST;
 	int count, num;
@@ -662,14 +637,14 @@ void receive_xattr(int f, struct file_struct *file)
 	if (ndx < 0 || (size_t)ndx > rsync_xal_l.count) {
 		rprintf(FERROR, "receive_xattr: xa index %d out of"
 			" range for %s\n", ndx, f_name(file, NULL));
-		exit_cleanup(RERR_PROTOCOL);
+		exit_cleanup(RERR_STREAMIO);
 	}
 
 	if (ndx != 0) {
 		F_XATTR(file) = ndx - 1;
 		return;
 	}
-
+	
 	if ((count = read_varint(f)) != 0) {
 		(void)EXPAND_ITEM_LIST(&temp_xattr, rsync_xa, count);
 		temp_xattr.count = 0;
@@ -749,35 +724,18 @@ void receive_xattr(int f, struct file_struct *file)
 
 /* Turn the xattr data in stat_x into cached xattr data, setting the index
  * values in the file struct. */
-void cache_tmp_xattr(struct file_struct *file, stat_x *sxp)
+void cache_xattr(struct file_struct *file, stat_x *sxp)
 {
 	int ndx;
 
 	if (!sxp->xattr)
 		return;
 
-	if (prior_xattr_count == (size_t)-1)
-		prior_xattr_count = rsync_xal_l.count;
 	ndx = find_matching_xattr(sxp->xattr);
 	if (ndx < 0)
 		rsync_xal_store(sxp->xattr); /* adds item to rsync_xal_l */
 
 	F_XATTR(file) = ndx;
-}
-
-void uncache_tmp_xattrs(void)
-{
-	if (prior_xattr_count != (size_t)-1) {
-		item_list *xattr_item = rsync_xal_l.items;
-		item_list *xattr_start = xattr_item + prior_xattr_count;
-		xattr_item += rsync_xal_l.count;
-		rsync_xal_l.count = prior_xattr_count;
-		while (xattr_item-- > xattr_start) {
-			rsync_xal_free(xattr_item);
-			free(xattr_item->items);
-		}
-		prior_xattr_count = (size_t)-1;
-	}
 }
 
 static int rsync_xal_set(const char *fname, item_list *xalp,
@@ -830,7 +788,7 @@ static int rsync_xal_set(const char *fname, item_list *xalp,
 			else if (sys_lsetxattr(fname, name, ptr, len) < 0) {
 				rsyserr(FERROR_XFER, errno,
 					"rsync_xal_set: lsetxattr(\"%s\",\"%s\") failed",
-					full_fname(fname), name);
+					fname, name);
 				ret = -1;
 			} else /* make sure caller sets mtime */
 				sxp->st.st_mtime = (time_t)-1;
@@ -851,7 +809,7 @@ static int rsync_xal_set(const char *fname, item_list *xalp,
 		if (sys_lsetxattr(fname, name, rxas[i].datum, rxas[i].datum_len) < 0) {
 			rsyserr(FERROR_XFER, errno,
 				"rsync_xal_set: lsetxattr(\"%s\",\"%s\") failed",
-				full_fname(fname), name);
+				fname, name);
 			ret = -1;
 		} else /* make sure caller sets mtime */
 			sxp->st.st_mtime = (time_t)-1;
@@ -880,8 +838,8 @@ static int rsync_xal_set(const char *fname, item_list *xalp,
 		if (i == xalp->count) {
 			if (sys_lremovexattr(fname, name) < 0) {
 				rsyserr(FERROR_XFER, errno,
-					"rsync_xal_set: lremovexattr(\"%s\",\"%s\") failed",
-					full_fname(fname), name);
+					"rsync_xal_clear: lremovexattr(\"%s\",\"%s\") failed",
+					fname, name);
 				ret = -1;
 			} else /* make sure caller sets mtime */
 				sxp->st.st_mtime = (time_t)-1;
@@ -906,25 +864,6 @@ int set_xattr(const char *fname, const struct file_struct *file,
 		return -1;
 	}
 
-#ifdef NO_SPECIAL_XATTRS
-	if (IS_SPECIAL(sxp->st.st_mode)) {
-		errno = ENOTSUP;
-		return -1;
-	}
-#endif
-#ifdef NO_DEVICE_XATTRS
-	if (IS_DEVICE(sxp->st.st_mode)) {
-		errno = ENOTSUP;
-		return -1;
-	}
-#endif
-#ifdef NO_SYMLINK_XATTRS
-	if (S_ISLNK(sxp->st.st_mode)) {
-		errno = ENOTSUP;
-		return -1;
-	}
-#endif
-
 	ndx = F_XATTR(file);
 	return rsync_xal_set(fname, lst + ndx, fnamecmp, sxp);
 }
@@ -943,7 +882,7 @@ int set_xattr_acl(const char *fname, int is_access_acl, const char *buf, size_t 
 	if (sys_lsetxattr(fname, name, buf, buf_len) < 0) {
 		rsyserr(FERROR_XFER, errno,
 			"set_xattr_acl: lsetxattr(\"%s\",\"%s\") failed",
-			full_fname(fname), name);
+			fname, name);
 		return -1;
 	}
 	return 0;
@@ -1031,7 +970,7 @@ int set_stat_xattr(const char *fname, struct file_struct *file, mode_t new_mode)
 	fst.st_mode &= (_S_IFMT | CHMOD_BITS);
 	fmode = new_mode & (_S_IFMT | CHMOD_BITS);
 
-	if (IS_DEVICE(fmode)) {
+	if (IS_DEVICE(fmode) || IS_SPECIAL(fmode)) {
 		uint32 *devp = F_RDEV_P(file);
 		rdev = MAKEDEV(DEV_MAJOR(devp), DEV_MINOR(devp));
 	} else
@@ -1042,7 +981,7 @@ int set_stat_xattr(const char *fname, struct file_struct *file, mode_t new_mode)
 	     | (S_ISDIR(fst.st_mode) ? 0700 : 0600);
 	if (fst.st_mode != mode)
 		do_chmod(fname, mode);
-	if (!IS_DEVICE(fst.st_mode))
+	if (!IS_DEVICE(fst.st_mode) && !IS_SPECIAL(fst.st_mode))
 		fst.st_rdev = 0; /* just in case */
 
 	if (mode == fmode && fst.st_rdev == rdev

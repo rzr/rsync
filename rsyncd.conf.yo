@@ -1,5 +1,5 @@
 mailto(rsync-bugs@samba.org)
-manpage(rsyncd.conf)(5)(26 Mar 2011)()()
+manpage(rsyncd.conf)(5)(6 Sep 2008)()()
 manpagename(rsyncd.conf)(configuration file for rsync in daemon mode)
 manpagesynopsis()
 
@@ -310,7 +310,7 @@ was run as root. This complements the "uid" parameter. The default is gid -2,
 which is normally the group "nobody".
 
 dit(bf(fake super)) Setting "fake super = yes" for a module causes the
-daemon side to behave as if the bf(--fake-super) command-line option had
+daemon side to behave as if the bf(--fake-user) command-line option had
 been specified.  This allows the full attributes of a file to be stored
 without having to have the daemon actually running as root.
 
@@ -393,8 +393,8 @@ usernames and passwords are stored in the file specified by the
 "secrets file" parameter. The default is for all users to be able to
 connect without a password (this is called "anonymous rsync").
 
-See also the section entitled "USING RSYNC-DAEMON FEATURES VIA A REMOTE
-SHELL CONNECTION" in bf(rsync)(1) for information on how handle an
+See also the "CONNECTING TO AN RSYNC DAEMON OVER A REMOTE SHELL
+PROGRAM" section in bf(rsync)(1) for information on how handle an
 rsyncd.conf-level username that differs from the remote-shell-level
 username when using a remote shell to connect to an rsync daemon.
 
@@ -700,7 +700,7 @@ url(http://rsync.samba.org/)(http://rsync.samba.org/)
 
 manpagesection(VERSION)
 
-This man page is current for version 3.0.8 of rsync.
+This man page is current for version 3.0.4 of rsync.
 
 manpagesection(CREDITS)
 

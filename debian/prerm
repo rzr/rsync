@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/sh
 # prerm for rsync
 
 case "$1" in

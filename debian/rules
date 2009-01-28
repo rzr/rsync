@@ -27,7 +27,7 @@ CFLAGS += -g -O2
 endif
 
 # backwards compatibility stuff, from dpkg-architecture manpage
-DEB_BUILD_ARCH := $(shell dpkg --print-architecture)
+DEB_BUILD_ARCH := $(shell dpkg --print-installation-architecture)
 DEB_BUILD_GNU_CPU := $(patsubst hurd-%,%,$(DEB_BUILD_ARCH))
 ifeq ($(filter-out hurd-%,$(DEB_BUILD_ARCH)),)
 DEB_BUILD_GNU_SYSTEM := gnu
@@ -83,7 +83,6 @@ binary-arch:	checkroot build
 			debian/tmp/usr/share/doc/rsync/scripts \
 			debian/tmp/usr/share/man/man1 \
 			debian/tmp/usr/share/man/man5 \
-			debian/tmp/usr/share/lintian/overrides \
 			debian/tmp/etc \
 			debian/tmp/etc/default \
 			debian/tmp/etc/init.d
@@ -111,7 +110,6 @@ endif
 	$(INSTALL_SCRIPT) debian/postrm   debian/tmp/DEBIAN/
 	$(INSTALL_FILE) debian/default  debian/tmp/etc/default/rsync
 	$(INSTALL_SCRIPT) debian/init.d debian/tmp/etc/init.d/rsync
-	$(INSTALL_FILE) debian/lintian.overrides  debian/tmp/usr/share/lintian/overrides/rsync
 	(cd debian/tmp; find ./etc -type f | sed s,.,,) > debian/tmp/DEBIAN/conffiles
 	(cd debian/tmp; find usr -type f -print0 | xargs -0 md5sum) > debian/tmp/DEBIAN/md5sums
 	dpkg-shlibdeps debian/tmp/usr/bin/$(BINS)

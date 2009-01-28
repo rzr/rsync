@@ -6,7 +6,7 @@
 # Required-Stop:     $remote_fs $syslog
 # Should-Start:      $named
 # Default-Start:     2 3 4 5
-# Default-Stop:      
+# Default-Stop:      1
 # Short-Description: fast remote file copy program daemon
 # Description:       rsync is a program that allows files to be copied to and
 #                    from remote machines in much the same way as rcp.
@@ -22,131 +22,134 @@ RSYNC_ENABLE=false
 RSYNC_OPTS=''
 RSYNC_DEFAULTS_FILE=/etc/default/rsync
 RSYNC_CONFIG_FILE=/etc/rsyncd.conf
-RSYNC_PID_FILE=/var/run/rsync.pid
 RSYNC_NICE_PARM=''
-RSYNC_IONICE_PARM=''
 
 test -x $DAEMON || exit 0
 
 . /lib/lsb/init-functions
+. /etc/default/rcS
 
 if [ -s $RSYNC_DEFAULTS_FILE ]; then
     . $RSYNC_DEFAULTS_FILE
     case "x$RSYNC_ENABLE" in
-	xtrue|xfalse)	;;
-	xinetd)		exit 0
-			;;
-	*)		log_failure_msg "Value of RSYNC_ENABLE in $RSYNC_DEFAULTS_FILE must be either 'true' or 'false';"
-			log_failure_msg "not starting rsync daemon."
-			exit 1
-			;;
+        xtrue|xfalse)   ;;
+        xinetd)         exit 0
+                        ;;
+        *)              log_failure_msg "Value of RSYNC_ENABLE in $RSYNC_DEFAULTS_FILE must be either 'true' or 'false';"
+                        log_failure_msg "not starting rsync daemon."
+                        exit 1
+                        ;;
     esac
     case "x$RSYNC_NICE" in
-	x[0-9])		RSYNC_NICE_PARM="--nicelevel $RSYNC_NICE";;
-	x[1-9][0-9])	RSYNC_NICE_PARM="--nicelevel $RSYNC_NICE";;
-	x)		;;
-	*)		log_warning_msg "Value of RSYNC_NICE in $RSYNC_DEFAULTS_FILE must be a value between 0 and 19 (inclusive);"
-			log_warning_msg "ignoring RSYNC_NICE now."
-			;;
-    esac
-    case "x$RSYNC_IONICE" in
-	x-c[123]*)	RSYNC_IONICE_PARM="$RSYNC_IONICE";;
-	x)		;;
-	*)		log_warning_msg "Value of RSYNC_IONICE in $RSYNC_DEFAULTS_FILE must be -c1, -c2 or -c3;"
-			log_warning_msg "ignoring RSYNC_IONICE now."
-			;;
+        x[0-9])         RSYNC_NICE_PARM="--nicelevel $RSYNC_NICE";;
+        x[1-9][0-9])    RSYNC_NICE_PARM="--nicelevel $RSYNC_NICE";;
+        x)              ;;
+        *)              log_warning_msg "Value of RSYNC_NICE in $RSYNC_DEFAULTS_FILE must be a value between 0 and 19 (inclusive);"
+                        log_warning_msg "ignoring RSYNC_NICE now."
+                        ;;
     esac
 fi
 
 export PATH="${PATH:+$PATH:}/usr/sbin:/sbin"
 
-rsync_start() {
-    if [ ! -s "$RSYNC_CONFIG_FILE" ]; then
-        log_failure_msg "missing or empty config file $RSYNC_CONFIG_FILE"
-        log_end_msg 1
-        exit 0
-    fi
-    # See ionice(1)
-    if [ -n "$RSYNC_IONICE_PARM" ] && [ -x /usr/bin/ionice ] &&
-        /usr/bin/ionice "$RSYNC_IONICE_PARM" true 2>/dev/null; then
-        /usr/bin/ionice "$RSYNC_IONICE_PARM" -p$$ > /dev/null 2>&1
-    fi
-    if start-stop-daemon --start --quiet --background \
-        --pidfile $RSYNC_PID_FILE --make-pidfile \
-        $RSYNC_NICE_PARM --exec $DAEMON \
-        -- --no-detach --daemon --config "$RSYNC_CONFIG_FILE" $RSYNC_OPTS
-    then
-        rc=0
-        sleep 1
-        if ! kill -0 $(cat $RSYNC_PID_FILE) >/dev/null 2>&1; then
-            log_failure_msg "rsync daemon failed to start"
-            rc=1
-        fi
-    else
-        rc=1
-    fi
-    if [ $rc -eq 0 ]; then
-        log_end_msg 0
-    else
-        log_end_msg 1
-        rm -f $RSYNC_PID_FILE
-    fi
-} # rsync_start
-
-
 case "$1" in
   start)
 	if "$RSYNC_ENABLE"; then
-	    log_daemon_msg "Starting rsync daemon" "rsync"
-	    if [ -s $RSYNC_PID_FILE ] && kill -0 $(cat $RSYNC_PID_FILE) >/dev/null 2>&1; then
-		log_progress_msg "apparently already running"
-		log_end_msg 0
+            log_daemon_msg "Starting rsync daemon" "rsync"
+	    if [ -s /var/run/rsync.pid ] && kill -0 $(cat /var/run/rsync.pid) >/dev/null 2>&1; then
+                log_progress_msg "apparently already running"
+                log_end_msg 0
 		exit 0
 	    fi
-            rsync_start
+            if [ ! -s "$RSYNC_CONFIG_FILE" ]; then
+                log_failure_msg "missing or empty config file $RSYNC_CONFIG_FILE"
+		log_end_msg 1
+                exit 1
+            fi
+            if start-stop-daemon --start --quiet --background \
+                --pidfile /var/run/rsync.pid --make-pidfile \
+                $RSYNC_NICE_PARM --exec /usr/bin/rsync \
+                -- --no-detach --daemon --config "$RSYNC_CONFIG_FILE" $RSYNC_OPTS
+            then
+                rc=0
+                sleep 1
+                if ! kill -0 $(cat /var/run/rsync.pid) >/dev/null 2>&1; then
+                    log_failure_msg "rsync daemon failed to start"
+                    rc=1
+                fi
+            else
+                rc=1
+            fi
+            if [ $rc -eq 0 ]; then
+                log_end_msg 0
+            else
+                log_end_msg 1
+                rm -f /var/run/rsync.pid
+            fi
         else
             if [ -s "$RSYNC_CONFIG_FILE" ]; then
-                [ "$VERBOSE" != no ] && log_warning_msg "rsync daemon not enabled in $RSYNC_DEFAULTS_FILE, not starting..."
+		[ "$VERBOSE" != no ] && log_warning_msg "rsync daemon not enabled in /etc/default/rsync, not starting..."
             fi
-	fi
+        fi
 	;;
   stop)
-	log_daemon_msg "Stopping rsync daemon" "rsync"
-	start-stop-daemon --stop --quiet --oknodo --pidfile $RSYNC_PID_FILE
-	log_end_msg $?
-	rm -f $RSYNC_PID_FILE
+        log_daemon_msg "Stopping rsync daemon" "rsync"
+	start-stop-daemon --stop --quiet --oknodo --pidfile /var/run/rsync.pid
+        log_end_msg $?
+	rm -f /var/run/rsync.pid
 	;;
 
   reload|force-reload)
-	log_warning_msg "Reloading rsync daemon: not needed, as the daemon"
-	log_warning_msg "re-reads the config file whenever a client connects."
+        log_warning_msg "Reloading rsync daemon: not needed, as the daemon"
+        log_warning_msg "re-reads the config file whenever a client connects."
 	;;
 
   restart)
 	set +e
-	if $RSYNC_ENABLE; then
-	    log_daemon_msg "Restarting rsync daemon" "rsync"
-	    if [ -s $RSYNC_PID_FILE ] && kill -0 $(cat $RSYNC_PID_FILE) >/dev/null 2>&1; then
-		start-stop-daemon --stop --quiet --oknodo --pidfile $RSYNC_PID_FILE || true
+        if $RSYNC_ENABLE; then
+            log_daemon_msg "Restarting rsync daemon" "rsync"
+	    if [ -s /var/run/rsync.pid ] && kill -0 $(cat /var/run/rsync.pid) >/dev/null 2>&1; then
+		start-stop-daemon --stop --quiet --oknodo --pidfile /var/run/rsync.pid || true
 		sleep 1
 	    else
-		log_warning_msg "rsync daemon not running, attempting to start."
-	    	rm -f $RSYNC_PID_FILE
+                log_warning_msg "rsync daemon not running, attempting to start."
+	    	rm -f /var/run/rsync.pid
 	    fi
-            rsync_start
-        else
-            if [ -s "$RSYNC_CONFIG_FILE" ]; then
-                [ "$VERBOSE" != no ] && log_warning_msg "rsync daemon not enabled in $RSYNC_DEFAULTS_FILE, not starting..."
+            if [ ! -s "$RSYNC_CONFIG_FILE" ]; then
+                log_failure_msg "missing or empty config file $RSYNC_CONFIG_FILE"
+		log_end_msg 1
+                exit 1
             fi
-	fi
+            if start-stop-daemon --start --quiet --background \
+                --pidfile /var/run/rsync.pid --make-pidfile \
+                $RSYNC_NICE_PARM --exec /usr/bin/rsync \
+                -- --no-detach --daemon --config "$RSYNC_CONFIG_FILE" $RSYNC_OPTS
+            then
+                rc=0
+                sleep 1
+                if ! kill -0 $(cat /var/run/rsync.pid) >/dev/null 2>&1; then
+                    log_failure_msg "rsync daemon failed to start"
+                    rc=1
+                fi
+            else
+                rc=1
+            fi
+            if [ $rc -eq 0 ]; then
+                log_end_msg 0
+            else
+                log_end_msg 1
+                rm -f /var/run/rsync.pid
+            fi
+        else
+            [ "$VERBOSE" != no ] && log_warning_msg "rsync daemon not enabled in /etc/default/rsync, not starting..."
+        fi
 	;;
+#  status)
+#	status_of_proc -p /var/run/rsync.pid "$DAEMON" rsync && exit 0 || exit $?
+#	;;
 
-  status)
-	status_of_proc -p $RSYNC_PID_FILE "$DAEMON" rsync
-	exit $?	# notreached due to set -e
-	;;
   *)
-	echo "Usage: /etc/init.d/rsync {start|stop|reload|force-reload|restart|status}"
+	echo "Usage: /etc/init.d/rsync {start|stop|reload|force-reload|restart}"
 	exit 1
 esac
 

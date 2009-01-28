@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1998-2001 Andrew Tridgell <tridge@samba.org>
  * Copyright (C) 2000-2001 Martin Pool <mbp@samba.org>
- * Copyright (C) 2003-2009 Wayne Davison
+ * Copyright (C) 2003-2008 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,6 +35,8 @@ extern int msg_fd_out;
 extern int allow_8bit_chars;
 extern int protocol_version;
 extern int preserve_times;
+extern int uid_ndx;
+extern int gid_ndx;
 extern int progress_is_active;
 extern int stdout_format_has_i;
 extern int stdout_format_has_o_or_i;
@@ -50,10 +52,10 @@ extern char *logfile_name;
 extern iconv_t ic_chck;
 #endif
 #ifdef ICONV_OPTION
-extern iconv_t ic_recv;
+extern iconv_t ic_send, ic_recv;
 #endif
-extern char curr_dir[MAXPATHLEN];
-extern char *full_module_path;
+extern char curr_dir[];
+extern char *module_dir;
 extern unsigned int module_dirlen;
 
 static int log_initialised;
@@ -601,7 +603,7 @@ static void log_formatted(enum logcode code, const char *format, const char *op,
 			n = timestring(time(NULL));
 			break;
 		case 'P':
-			n = full_module_path;
+			n = module_dir;
 			break;
 		case 'u':
 			n = auth_user;

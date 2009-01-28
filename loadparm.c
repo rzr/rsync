@@ -1,3 +1,6 @@
+/* This is based on loadparm.c from Samba, written by Andrew Tridgell
+   and Karl Auer */
+
 /*
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,14 +16,13 @@
  * with this program; if not, visit the http://fsf.org website.
  */
 
-/* This is based on loadparm.c from Samba, written by Andrew Tridgell
- * and Karl Auer.  Some of the changes are:
+/* some fixes
  *
  * Copyright (C) 2001, 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2003-2009 Wayne Davison <wayned@samba.org>
  */
 
-/* Load parameters.
+/*
+ *  Load parameters.
  *
  *  This module provides suitable callback functions for the params
  *  module. It builds the internal table of service details which is

@@ -1,0 +1,32 @@
+On Tue, 2008-09-23 at 12:58 +0200, Paul Slootman wrote:
+> In debian bug #493559 (http://bugs.debian.org/493559) the problem is
+> that when requesting a file from an older version rsync, the remote
+> server gives an error:
+> 
+> $ rsync rsync://rsync.blackholes.us/zones/countries/countries.rbl /tmp
+> rsync: on remote machine: -: unknown option
+> rsync error: requested action not supported (code 4) at clientserver.c(517)
+> rsync: connection unexpectedly closed (4 bytes received so far) [receiver]
+> rsync error: error in rsync protocol data stream (code 12) at io.c(632) [receiver=3.0.4]
+
+This appears to be a result of adding the -e server option and
+incompletely removing it for pre-protocol-30 servers.  This patch should
+fix it:
+
+--- a/options.c
++++ b/options.c
+@@ -2267,7 +2267,8 @@ void server_options(char **args, int *argc_p)
+ 
+ 	argstr[x] = '\0';
+ 
+-	args[ac++] = argstr;
++	if (x != 1)
++		args[ac++] = argstr;
+ 
+ #ifdef ICONV_OPTION
+ 	if (iconv_opt) {
+
+The patch is also in my repository.
+
+Matt
+
