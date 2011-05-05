@@ -1,8 +1,9 @@
 Source: rsync
 Section: net
 Priority: optional
-Maintainer: Paul Slootman <paul@debian.org>
-Build-Depends: libpopt-dev,libacl1-dev,libattr1-dev, quilt
+XSBC-Original-Maintainer: Paul Slootman <paul@debian.org>
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Build-Depends: libpopt-dev,libacl1-dev,libattr1-dev
 Standards-Version: 3.9.1.0
 
 Package: rsync

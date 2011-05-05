@@ -40,4 +40,3 @@ config.status
 /testsuite/devices-fake.test
 /testsuite/xattrs-hlink.test
 /patches
-.pc

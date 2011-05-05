@@ -1,9 +1,12 @@
-rsync (0:3.0.8-1maemo0~rzr2) harmattan; urgency=low
+rsync (3.0.8-1ubuntu1) oneiric; urgency=low
 
-  * changed format to "3.0 (quilt)"
-  * wip: http://rzr.online.fr/q/handset
+  * Merge from debian unstable. Remaining changes:
+    - debian/patches/delete-delay.diff: correct error message when using
+      --delete-delay (LP: #516241), patch originally from Jonas Pedersen
+  * Drop debian/patches/security-CVE-2011-1097.diff which is now included
+    upstream
 
- -- Philippe Coval <rzr@gna.org>  Sat, 09 Jul 2011 22:03:12 +0200
+ -- Jamie Strandboge <jamie@ubuntu.com>  Thu, 05 May 2011 15:07:18 -0500
 
 rsync (3.0.8-1) unstable; urgency=low
 
@@ -11,6 +14,30 @@ rsync (3.0.8-1) unstable; urgency=low
   * Bumped Standards-Version to 3.9.1.0 (no change necessary).
 
  -- Paul Slootman <paul@debian.org>  Thu, 14 Apr 2011 15:10:52 +0200
+
+rsync (3.0.7-2ubuntu3) natty; urgency=low
+
+  * SECURITY UPDATE: denial of service and possible arbitrary code
+    execution via malformed data
+    - debian/patches/security-CVE-2011-1097.diff: introduce and use
+      FLAG_OWNED_BY_US in flist.c, generator.c, log.c, rsync.*. 
+    - CVE-2011-1097
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 08 Apr 2011 09:53:11 -0400
+
+rsync (3.0.7-2ubuntu2) natty; urgency=low
+
+  * No-change upload to reduce changelogs.
+
+ -- Martin Pitt <martin.pitt@ubuntu.com>  Mon, 13 Dec 2010 12:39:26 +0100
+
+rsync (3.0.7-2ubuntu1) maverick; urgency=low
+
+  * Merge from debian unstable. (LP: #588161)  Remaining changes:
+    - Correct error message when using --delete-delay (LP: #516241), patch
+      originally from Jonas Pedersen
+
+ -- Jean-Louis Dupond <jean-louis@dupond.be>  Wed, 05 May 2010 03:21:22 +0100
 
 rsync (3.0.7-2) unstable; urgency=low
 
@@ -22,6 +49,13 @@ rsync (3.0.7-2) unstable; urgency=low
   * Bumped Standards-Version to 3.8.4 (no chenge necessary).
 
  -- Paul Slootman <paul@debian.org>  Wed, 17 Feb 2010 17:38:22 +0100
+
+rsync (3.0.7-1ubuntu1) lucid; urgency=low
+
+  * Correct error message when using --delete-delay (LP: #516241), patch
+    originally from Jonas Pedersen
+
+ -- Thierry Carrez <thierry.carrez@ubuntu.com>  Tue, 30 Mar 2010 10:41:28 +0200
 
 rsync (3.0.7-1) unstable; urgency=low
 
@@ -1007,3 +1041,4 @@ rsync (1.6.2-1) unstable; urgency=low
   * Initial Release
 
  -- Philip Hands <phil@hands.com>  Wed, 9 Oct 1996 23:45:08 +0100
+
