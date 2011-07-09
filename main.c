@@ -4,7 +4,7 @@
  * Copyright (C) 1996-2001 Andrew Tridgell <tridge@samba.org>
  * Copyright (C) 1996 Paul Mackerras
  * Copyright (C) 2001, 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2003-2008 Wayne Davison
+ * Copyright (C) 2003-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,7 +33,6 @@ extern int list_only;
 extern int am_root;
 extern int am_server;
 extern int am_sender;
-extern int am_generator;
 extern int am_daemon;
 extern int inc_recurse;
 extern int blocking_io;
@@ -65,13 +64,14 @@ extern int write_batch;
 extern int batch_fd;
 extern int filesfrom_fd;
 extern int connect_timeout;
+extern dev_t filesystem_dev;
 extern pid_t cleanup_child_pid;
 extern unsigned int module_dirlen;
 extern struct stats stats;
 extern char *filesfrom_host;
 extern char *partial_dir;
 extern char *dest_option;
-extern char *basis_dir[];
+extern char *basis_dir[MAX_BASIS_DIRS+1];
 extern char *rsync_path;
 extern char *shell_cmd;
 extern char *batch_name;
@@ -81,6 +81,8 @@ extern struct file_list *first_flist;
 extern struct filter_list_struct daemon_filter_list;
 
 uid_t our_uid;
+int am_receiver = 0;  /* Only set to 1 after the receiver/generator fork. */
+int am_generator = 0; /* Only set to 1 after the receiver/generator fork. */
 int local_server = 0;
 int daemon_over_rsh = 0;
 mode_t orig_umask = 0;
@@ -427,7 +429,11 @@ static pid_t do_cmd(char *cmd, char *machine, char *user, char **remote_argv, in
 				rprintf(FERROR, "internal: args[] overflowed in do_cmd()\n");
 				exit_cleanup(RERR_SYNTAX);
 			}
-			args[argc++] = *remote_argv++;
+			if (**remote_argv == '-') {
+				if (asprintf(args + argc++, "./%s", *remote_argv++) < 0)
+					out_of_memory("do_cmd");
+			} else
+				args[argc++] = *remote_argv++;
 			remote_argc--;
 		}
 	}
@@ -469,7 +475,7 @@ static pid_t do_cmd(char *cmd, char *machine, char *user, char **remote_argv, in
 #ifdef ICONV_CONST
 		setup_iconv();
 #endif
-		if (protect_args)
+		if (protect_args && !daemon_over_rsh)
 			send_protected_args(*f_out_p, args);
 	}
 
@@ -507,6 +513,10 @@ static char *get_local_name(struct file_list *flist, char *dest_path)
 	if (!dest_path || list_only)
 		return NULL;
 
+	/* Treat an empty string as a copy into the current directory. */
+	if (!*dest_path)
+	    dest_path = ".";
+
 	if (daemon_filter_list.head) {
 		char *slash = strrchr(dest_path, '/');
 		if (slash && (slash[1] == '\0' || (slash[1] == '.' && slash[2] == '\0')))
@@ -533,6 +543,7 @@ static char *get_local_name(struct file_list *flist, char *dest_path)
 					full_fname(dest_path));
 				exit_cleanup(RERR_FILESELECT);
 			}
+			filesystem_dev = st.st_dev; /* ensures --force works right w/-x */
 			return NULL;
 		}
 		if (file_total > 1) {
@@ -760,6 +771,8 @@ static int do_recv(int f_in, int f_out, char *local_name)
 	}
 
 	if (pid == 0) {
+		am_receiver = 1;
+
 		close(error_pipe[0]);
 		if (f_in != f_out)
 			close(f_out);
@@ -1016,7 +1029,6 @@ int client_run(int f_in, int f_out, pid_t pid, int argc, char *argv[])
 		if (write_batch && !am_server)
 			start_write_batch(f_out);
 		flist = send_file_list(f_out, argc, argv);
-		set_msg_fd_in(-1);
 		if (verbose > 3)
 			rprintf(FINFO,"file list sent\n");
 
@@ -1187,8 +1199,8 @@ static int start_client(int argc, char *argv[])
 			rprintf(FERROR, "remote destination is not allowed with --read-batch\n");
 			exit_cleanup(RERR_SYNTAX);
 		}
-		remote_argv = argv + argc - 1;
-		remote_argc = 1;
+		remote_argv = argv += argc - 1;
+		remote_argc = argc = 1;
 	}
 
 	if (am_sender) {

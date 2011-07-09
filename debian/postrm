@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh -e
 # postrm for rsync
 
 if [ "$1" = "purge" ] ; then

@@ -1,3 +1,256 @@
+NEWS for rsync 3.0.7 (31 Dec 2009)
+Protocol: 30 (unchanged)
+Changes since 3.0.6:
+
+  BUG FIXES:
+
+    - Fixed a bogus free when using --xattrs with --backup.
+
+    - Avoid an error when --dry-run  was trying to stat a prior hard-link file
+      that hasn't really been created.
+
+    - Fixed a problem with --compress (-z) where the receiving side could
+      return the error "inflate (token) returned -5".
+
+    - Fixed a bug where --delete-during could delete in a directory before it
+      noticed that the sending side sent an I/O error for that directory (both
+      sides of the transfer must be at least 3.0.7).
+
+    - Improved --skip-compress's error handling of bad character-sets and got
+      rid of a lingering debug fprintf().
+
+    - Fixed the daemon's conveyance of io_error value from the sender.
+
+    - An rsync daemon use seteuid() (when available) if it used setuid().
+
+    - Get the permissions right on a --fake-super transferred directory that
+      needs more owner permissions to emulate root behavior.
+
+    - An absolute-path filter rule (i.e. with a '/' modifier) no longer loses
+      its modifier when sending the filter rules to the remote rsync.
+
+    - Improved the "--delete does not work without -r or -d" message.
+
+    - Improved rsync's handling of --timeout to avoid a weird timeout case
+      where the sender could timeout even though it has recently written data
+      to the socket (but hasn't read data recently, due to the writing).
+
+    - Some misc manpage improvements.
+
+    - Fixed the chmod-temp-dir testsuite on a system without /var/tmp.
+
+    - Make sure that a timeout specified in the daemon's config is used as a
+      maximum timeout value when the user also specifies a timeout.
+
+    - Improved the error-exit reporting when rsync gets an error trying to
+      cleanup after an error:  the initial error is reported.
+
+    - Improved configure's detection of IPv6 for solaris and cygwin.
+
+    - The AIX sysacls routines will now return ENOSYS if ENOTSUP is missing.
+
+    - Made our (only used if missing) getaddrinfo() routine use inet_pton()
+      (which we also provide) instead of inet_aton().
+
+    - The exit-related debug messages now mention the program's role so it is
+      clear who output what message.
+
+  DEVELOPER RELATED:
+
+    - Got rid of type-punned compiler warnings output by newer gcc versions.
+
+    - The Makefile now ensures that proto.h will be rebuilt if config.h changes.
+
+    - The testsuite no longer uses "id -u", so it works better on solaris.
+
+
+NEWS for rsync 3.0.6 (8 May 2009)
+Protocol: 30 (unchanged)
+Changes since 3.0.5:
+
+  BUG FIXES:
+
+    - Fixed a --read-batch hang when rsync is reading a batch file that was
+      created from an incremental-recursion transfer.
+
+    - Fixed the daemon's socket code to handle the simultaneous arrival of
+      multiple connections.
+
+    - Fix --safe-links/--copy-unsafe-links to properly handle symlinks that
+      have consecutive slashes in the value.
+
+    - Fixed the parsing of an [IPv6_LITERAL_ADDR] when a USER@ is prefixed.
+
+    - The sender now skips a (bogus) symlink that has a 0-length value, which
+      avoids a transfer error in the receiver.
+
+    - Fixed a case where the sender could die with a tag-0 error if there was
+      an I/O during the sending of the file list.
+
+    - Fixed the rrsync script to avoid a server-side problem when -e is at the
+      start of the short options.
+
+    - Fixed a problem where a vanished directory could turn into an exit code
+      23 instead of the proper exit code 24.
+
+    - Fixed the --iconv conversion of symlinks when doing a local copy.
+
+    - Fixed a problem where --one-file-system was not stopping deletions on the
+      receiving side when a mount-point directory did not match a directory in
+      the transfer.
+
+    - Fixed the dropping of an ACL mask when no named ACL values were present.
+
+    - Fixed an ACL/xattr corruption issue where the --backup option could cause
+      rsync to associate the wrong ACL/xattr information with received files.
+
+    - Fixed the use of --xattrs with --only-write-batch.
+
+    - Fixed the use of --dry-run with --read-batch.
+
+    - Fixed configure's erroneous use of target.
+
+    - Fixed configure's --disable-debug option.
+
+    - Fixed a run-time issue for systems that can't find iconv_open() by adding
+      the --disable-iconv-open configure option.
+
+    - Complain and die if the user tries to combine --remove-source-files (or
+      the deprecated --remove-sent-files) with --read-batch.
+
+    - Fixed an failure transferring special files from Solaris to Linux.
+
+
+NEWS for rsync 3.0.5 (28 Dec 2008)
+Protocol: 30 (unchanged)
+Changes since 3.0.4:
+
+  BUG FIXES:
+
+    - Initialize xattr data in a couple spots in the hlink code, which avoids a
+      crash when the xattr pointer's memory happens to start out non-zero.
+      Also fixed the itemizing of an alt-dest file's xattrs when hard-linking.
+
+    - Don't send a bogus "-" option to an older server if there were no short
+      options specified.
+
+    - Fixed skipping of unneeded updates in a batch file when incremental
+      recursion is active.  Added a test for this.  Made batch-mode handle
+      "redo" files properly (and without hanging).
+
+    - Fix the %P logfile escape when the daemon logs from inside a chroot.
+
+    - Fixed the use of -s (--protect-args) when used with a remote source or
+      destination that had an empty path (e.g. "host:").  Also fixed a problem
+      when -s was used when accessing a daemon via a remote-shell.
+
+    - Fixed the use of a dot-dir path (e.g. foo/./bar) inside a --files-from
+      file when the root of the transfer isn't the current directory.
+
+    - Fixed a bug with "-K --delete" removing symlinks to directories when
+      incremental recursion is active.
+
+    - Fixed a hard to trigger hang when using --remove-source-files.
+
+    - Got rid of an annoying delay when accessing a daemon via a remote-shell.
+
+    - Properly ignore (superfluous) source args on a --read-batch command.
+
+    - Improved the manpage's description of the '*' wildcard to remove the
+      confusing "non-empty" qualifier.
+
+    - Fixed reverse lookups in the compatibility-library version of
+      getnameinfo().
+
+    - Fixed a bug when using --sparse on a sparse file that has over 2GB of
+      consecutive sparse data.
+
+    - Avoid a hang when using at least 3 --verbose options on a transfer with a
+      client sender (which includes local copying).
+
+    - Fixed a problem with --delete-delay reporting an error when it was ready
+      to remove a directory that was now gone.
+
+    - Got rid of a bunch of "warn_unused_result" compiler warnings.
+
+    - If an ftruncate() on a received file fails, it now causes a partial-
+      transfer warning.
+
+    - Allow a path with a leading "//" to be preserved (CYGWIN only).
+
+  ENHANCEMENTS:
+
+    - Made the support/atomic-rsync script able to perform a fully atomic
+      update of the copied hierarchy when the destination is setup using a
+      particular symlink idiom.
+
+
+NEWS for rsync 3.0.4 (6 Sep 2008)
+Protocol: 30 (unchanged)
+Changes since 3.0.3:
+
+  BUG FIXES:
+
+    - Fixed a bug in the hard-linking code where it would sometimes try to
+      allocate 0 bytes of memory (which fails on some OSes, such as AIX).
+
+    - Fixed the hard-linking of files from a device that has a device number
+      of 0 (which seems to be a common device number on NetBSD).
+
+    - Fixed the handling of a --partial-dir that cannot be created.  This
+      particularly impacts the --delay-updates option (since the files cannot
+      be delayed without a partial-dir), and was potentially destructive if
+      the --remove-source-files was also specified.
+
+    - Fixed a couple issues in the --fake-super handling of xattrs when the
+      destination files have root-level attributes (e.g. selinux values) that
+      a non-root copy can't affect.
+
+    - Improved the keep-alive check in the generator to fire consistently in
+      incremental-recursion mode when --timeout is enabled.
+
+    - The --iconv option now converts the content of a symlink too, instead
+      of leaving it in the wrong character-set (requires 3.0.4 on both sides
+      of the transfer).
+
+    - When using --iconv, if a filename fails to convert on the receiving side,
+      this no longer makes deletions in the root-dir of the transfer fail
+      silently (the user now gets a warning about deletions being disabled
+      due to IO error as long as --ignore-errors was not specified).
+
+    - When using --iconv, if a server-side receiver can't convert a filename,
+      the error message sent back to the client no longer mangles the name
+      with the wrong charset conversion.
+
+    - Fixed a potential alignment issue in the IRIX ACL code when allocating
+      the initial "struct acl" object.  Also, cast mallocs to avoid warnings.
+
+    - Changed some errors that were going to stdout to go to stderr.
+
+    - Made human_num() and human_dnum() able to output a negative number
+      (rather than outputting a cryptic string of punctuation).
+
+  ENHANCEMENTS:
+
+    - Rsync will avoid sending an -e option to the server if an older protocol
+      is requested (and thus the option would not be useful).  This lets the
+      user specify the --protocol=29 option to access an overly-restrictive
+      server that is rejecting the protocol-30 use of -e to the server.
+
+    - Improved the message output for an RERR_PARTIAL exit.
+
+  DEVELOPER RELATED:
+
+    - The Makefile will not halt for just a timestamp change on the Makefile
+      or the configure files, only for actual changes in content.
+
+    - Changed some commands in the testsuite's xattrs.test that called "rsync"
+      instead of "$RSYNC".
+
+    - Enhanced the release scripts to be able to handle a branch release and
+      to do even more consistency checks on the files.
+
+
 NEWS for rsync 3.0.3 (29 Jun 2008)
 Protocol: 30 (unchanged)
 Changes since 3.0.2:
@@ -2841,6 +3094,10 @@ Changes since 2.4.6:
 
 Partial Protocol History
 	RELEASE DATE	VER.	DATE OF COMMIT*	PROTOCOL
+	26 Mar 2011	3.0.8			30
+	31 Dec 2009	3.0.7			30
+	08 May 2009	3.0.6			30
+	28 Dec 2008	3.0.5			30
 	06 Sep 2008	3.0.4			30
 	29 Jun 2008	3.0.3			30
 	08 Apr 2008	3.0.2			30

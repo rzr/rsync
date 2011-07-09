@@ -32,7 +32,7 @@
 #define DEFAULT_LOCK_FILE "/var/run/rsyncd.lock"
 #define URL_PREFIX "rsync://"
 
-#define SYMLINK_PREFIX "/rsyncd-munged/"
+#define SYMLINK_PREFIX "/rsyncd-munged/"  /* This MUST have a trailing slash! */
 #define SYMLINK_PREFIX_LEN ((int)sizeof SYMLINK_PREFIX - 1)
 
 #define BACKUP_SUFFIX "~"
@@ -60,10 +60,12 @@
 #define XMIT_RDEV_MINOR_8_pre30 (1<<11)	/* protocols 28 - 29  */
 #define XMIT_GROUP_NAME_FOLLOWS (1<<11) /* protocols 30 - now */
 #define XMIT_HLINK_FIRST (1<<12)	/* protocols 30 - now (HLINKED files only) */
+#define XMIT_IO_ERROR_ENDLIST (1<<12)	/* protocols 31*- now (w/XMIT_EXTENDED_FLAGS) (also protocol 30 w/'f' compat flag) */
 
 /* These flags are used in the live flist data. */
 
 #define FLAG_TOP_DIR (1<<0)	/* sender/receiver/generator */
+#define FLAG_OWNED_BY_US (1<<0) /* generator: set by make_file() for aux flists only */
 #define FLAG_FILE_SENT (1<<1)	/* sender/receiver/generator */
 #define FLAG_DIR_CREATED (1<<1)	/* generator */
 #define FLAG_CONTENT_DIR (1<<2)	/* sender/receiver/generator */
@@ -82,8 +84,12 @@
 
 /* These flags are passed to functions but not stored. */
 
-#define FLAG_DIVERT_DIRS (1<<16)/* sender */
+#define FLAG_DIVERT_DIRS (1<<16)   /* sender, but must be unique */
 
+/* These flags are for get_dirlist(). */
+#define GDL_IGNORE_FILTER_RULES (1<<0)
+
+/* Some helper macros for matching bits. */
 #define BITS_SET(val,bits) (((val) & (bits)) == (bits))
 #define BITS_SETnUNSET(val,onbits,offbits) (((val) & ((onbits)|(offbits))) == (onbits))
 #define BITS_EQUAL(b1,b2,mask) (((unsigned)(b1) & (unsigned)(mask)) \
@@ -94,7 +100,7 @@
 
 /* This is used when working on a new protocol version in CVS, and should
  * be a new non-zero value for each CVS change that affects the protocol.
- * It must ALWAYS be 0 when the protocol goes final! */
+ * It must ALWAYS be 0 when the protocol goes final (and NEVER before)! */
 #define SUBPROTOCOL_VERSION 0
 
 /* We refuse to interoperate with versions that are not in this range.
@@ -334,6 +340,18 @@ enum msgcode {
 #include <utime.h>
 #endif
 
+#if defined HAVE_LUTIMES || defined HAVE_UTIMENSAT
+#define CAN_SET_SYMLINK_TIMES 1
+#endif
+
+#if defined HAVE_LCHOWN || defined CHOWN_MODIFIES_SYMLINK
+#define CAN_CHOWN_SYMLINK 1
+#endif
+
+#if defined HAVE_LCHMOD || defined HAVE_SETATTRLIST
+#define CAN_CHMOD_SYMLINK 1
+#endif
+
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
@@ -396,7 +414,7 @@ enum msgcode {
 # include <limits.h>
 #endif
 
-#if defined HAVE_ICONV_OPEN && defined HAVE_ICONV_H
+#if defined USE_ICONV_OPEN && defined HAVE_ICONV_H
 #include <iconv.h>
 #ifndef ICONV_CONST
 #define ICONV_CONST
@@ -429,6 +447,8 @@ typedef unsigned int mode_t;
 #endif
 #ifndef HAVE_OFF_T
 typedef long off_t;
+#undef SIZEOF_OFF_T
+#define SIZEOF_OFF_T SIZEOF_LONG
 #endif
 #ifndef HAVE_SIZE_T
 typedef unsigned int size_t;
@@ -832,6 +852,15 @@ struct stats {
 
 struct chmod_mode_struct;
 
+struct flist_ndx_item {
+	struct flist_ndx_item *next;
+	int ndx;
+};
+
+typedef struct {
+	struct flist_ndx_item *head, *tail;
+} flist_ndx_list;
+
 #define EMPTY_ITEM_LIST {NULL, 0, 0}
 
 typedef struct {
@@ -1056,6 +1085,10 @@ extern int errno;
 
 #define IS_SPECIAL(mode) (S_ISSOCK(mode) || S_ISFIFO(mode))
 #define IS_DEVICE(mode) (S_ISCHR(mode) || S_ISBLK(mode))
+
+#define PRESERVE_FILE_TIMES	(1<<0)
+#define PRESERVE_DIR_TIMES	(1<<1)
+#define PRESERVE_LINK_TIMES	(1<<2)
 
 /* Initial mask on permissions given to temporary files.  Mask off setuid
      bits and group access because of potential race-condition security

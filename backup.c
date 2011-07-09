@@ -2,7 +2,7 @@
  * Backup handling code.
  *
  * Copyright (C) 1999 Andrew Tridgell
- * Copyright (C) 2003-2008 Wayne Davison
+ * Copyright (C) 2003-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -148,19 +148,25 @@ int make_bak_dir(const char *fullpath)
 #ifdef SUPPORT_ACLS
 				if (preserve_acls && !S_ISLNK(file->mode)) {
 					get_acl(rel, &sx);
-					cache_acl(file, &sx);
+					cache_tmp_acl(file, &sx);
 					free_acl(&sx);
 				}
 #endif
 #ifdef SUPPORT_XATTRS
 				if (preserve_xattrs) {
 					get_xattr(rel, &sx);
-					cache_xattr(file, &sx);
+					cache_tmp_xattr(file, &sx);
 					free_xattr(&sx);
 				}
 #endif
 				set_file_attrs(fbuf, file, NULL, NULL, 0);
 				unmake_file(file);
+#ifdef SUPPORT_ACLS
+				uncache_tmp_acls();
+#endif
+#ifdef SUPPORT_XATTRS
+				uncache_tmp_xattrs();
+#endif
 			}
 		}
 		*p = '/';
@@ -223,20 +229,26 @@ static int keep_backup(const char *fname)
 
 	if (!(buf = get_backup_name(fname))) {
 		unmake_file(file);
+#ifdef SUPPORT_ACLS
+		uncache_tmp_acls();
+#endif
+#ifdef SUPPORT_XATTRS
+		uncache_tmp_xattrs();
+#endif
 		return 0;
 	}
 
 #ifdef SUPPORT_ACLS
 	if (preserve_acls && !S_ISLNK(file->mode)) {
 		get_acl(fname, &sx);
-		cache_acl(file, &sx);
+		cache_tmp_acl(file, &sx);
 		free_acl(&sx);
 	}
 #endif
 #ifdef SUPPORT_XATTRS
 	if (preserve_xattrs) {
 		get_xattr(fname, &sx);
-		cache_xattr(file, &sx);
+		cache_tmp_xattr(file, &sx);
 		free_xattr(&sx);
 	}
 #endif
@@ -295,10 +307,10 @@ static int keep_backup(const char *fname)
 #ifdef SUPPORT_LINKS
 	if (!kept && preserve_links && S_ISLNK(file->mode)) {
 		const char *sl = F_SYMLINK(file);
-		if (safe_symlinks && unsafe_symlink(sl, buf)) {
+		if (safe_symlinks && unsafe_symlink(sl, fname)) {
 			if (verbose) {
-				rprintf(FINFO, "ignoring unsafe symlink %s -> %s\n",
-					full_fname(buf), sl);
+				rprintf(FINFO, "not backing up unsafe symlink \"%s\" -> \"%s\"\n",
+					fname, sl);
 			}
 			kept = 1;
 		} else {
@@ -326,6 +338,12 @@ static int keep_backup(const char *fname)
 		rprintf(FINFO, "make_bak: skipping non-regular file %s\n",
 			fname);
 		unmake_file(file);
+#ifdef SUPPORT_ACLS
+		uncache_tmp_acls();
+#endif
+#ifdef SUPPORT_XATTRS
+		uncache_tmp_xattrs();
+#endif
 		return 1;
 	}
 
@@ -344,6 +362,12 @@ static int keep_backup(const char *fname)
 	set_file_attrs(buf, file, NULL, fname, 0);
 	preserve_xattrs = save_preserve_xattrs;
 	unmake_file(file);
+#ifdef SUPPORT_ACLS
+	uncache_tmp_acls();
+#endif
+#ifdef SUPPORT_XATTRS
+	uncache_tmp_xattrs();
+#endif
 
 	if (verbose > 1) {
 		rprintf(FINFO, "backed up %s to %s\n",

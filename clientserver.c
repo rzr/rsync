@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1998-2001 Andrew Tridgell <tridge@samba.org>
  * Copyright (C) 2001-2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2002-2008 Wayne Davison
+ * Copyright (C) 2002-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -50,14 +50,12 @@ extern int logfile_format_has_i;
 extern int logfile_format_has_o_or_i;
 extern mode_t orig_umask;
 extern char *bind_address;
-extern char *sockopts;
 extern char *config_file;
 extern char *logfile_format;
 extern char *files_from;
 extern char *tmpdir;
 extern struct chmod_mode_struct *chmod_modes;
 extern struct filter_list_struct daemon_filter_list;
-extern char curr_dir[];
 #ifdef ICONV_OPTION
 extern char *iconv_opt;
 extern iconv_t ic_send, ic_recv;
@@ -74,6 +72,8 @@ struct chmod_mode_struct *daemon_chmod_modes;
  * enabled module can have a non-"/" module_dir these days.) */
 char *module_dir = NULL;
 unsigned int module_dirlen = 0;
+
+char *full_module_path;
 
 static int rl_nulls = 0;
 
@@ -259,7 +259,10 @@ int start_inband_exchange(int f_in, int f_out, const char *user, int argc, char 
 		if (strncmp(*argv, modname, modlen) == 0
 		 && argv[0][modlen] == '\0')
 			sargs[sargc++] = modname; /* we send "modname/" */
-		else
+		else if (**argv == '-') {
+			if (asprintf(sargs + sargc++, "./%s", *argv) < 0)
+				out_of_memory("start_inband_exchange");
+		} else
 			sargs[sargc++] = *argv;
 		argv++;
 		argc--;
@@ -395,10 +398,20 @@ static int read_arg_from_pipe(int fd, char *buf, int limit)
 	return bp - buf;
 }
 
+static int path_failure(int f_out, const char *dir, BOOL was_chdir)
+{
+	if (was_chdir)
+		rsyserr(FLOG, errno, "chdir %s failed\n", dir);
+	else
+		rprintf(FLOG, "normalize_path(%s) failed\n", dir);
+	io_printf(f_out, "@ERROR: chdir failed\n");
+	return -1;
+}
+
 static int rsync_module(int f_in, int f_out, int i, char *addr, char *host)
 {
 	int argc;
-	char **argv, **orig_argv, **orig_early_argv, *chroot_path = NULL;
+	char **argv, **orig_argv, **orig_early_argv, *module_chdir;
 	char line[BIGPATHBUFLEN];
 	uid_t uid = (uid_t)-2;  /* canonically "nobody" */
 	gid_t gid = (gid_t)-2;
@@ -499,29 +512,34 @@ static int rsync_module(int f_in, int f_out, int i, char *addr, char *host)
 	 * supplementary groups. */
 
 	module_dir = lp_path(i);
+	if (*module_dir == '\0') {
+		rprintf(FLOG, "No path specified for module %s\n", name);
+		io_printf(f_out, "@ERROR: no path setting.\n");
+		return -1;
+	}
 	if (use_chroot) {
 		if ((p = strstr(module_dir, "/./")) != NULL) {
-			*p = '\0';
-			p += 2;
-		} else if ((p = strdup("/")) == NULL) /* MEMORY LEAK */
-			out_of_memory("rsync_module");
+			*p = '\0'; /* Temporary... */
+			if (!(module_chdir = normalize_path(module_dir, True, NULL)))
+				return path_failure(f_out, module_dir, False);
+			*p = '/';
+			if (!(p = normalize_path(p + 2, True, &module_dirlen)))
+				return path_failure(f_out, strstr(module_dir, "/./"), False);
+			if (!(full_module_path = normalize_path(module_dir, False, NULL)))
+				full_module_path = module_dir;
+			module_dir = p;
+		} else {
+			if (!(module_chdir = normalize_path(module_dir, False, NULL)))
+				return path_failure(f_out, module_dir, False);
+			full_module_path = module_chdir;
+			module_dir = "/";
+			module_dirlen = 1;
+		}
+	} else {
+		if (!(module_chdir = normalize_path(module_dir, False, &module_dirlen)))
+			return path_failure(f_out, module_dir, False);
+		full_module_path = module_dir = module_chdir;
 	}
-
-	/* We do a change_dir() that doesn't actually call chdir()
-	 * just to make a relative path absolute. */
-	strlcpy(line, curr_dir, sizeof line);
-	if (!change_dir(module_dir, CD_SKIP_CHDIR))
-		goto chdir_failed;
-	if (strcmp(curr_dir, module_dir) != 0
-	 && (module_dir = strdup(curr_dir)) == NULL)
-		out_of_memory("rsync_module");
-	change_dir(line, CD_SKIP_CHDIR); /* Restore curr_dir. */
-
-	if (use_chroot) {
-		chroot_path = module_dir;
-		module_dir = p; /* p is "/" or our inside-chroot path */
-	}
-	module_dirlen = clean_fname(module_dir, CFN_COLLAPSE_DOT_DOT_DIRS | CFN_DROP_TRAILING_DOT_DIR);
 
 	if (module_dirlen == 1) {
 		module_dirlen = 0;
@@ -557,16 +575,8 @@ static int rsync_module(int f_in, int f_out, int i, char *addr, char *host)
 		char *modname, *modpath, *hostaddr, *hostname, *username;
 		int status;
 
-		if (!use_chroot)
-			p = module_dir;
-		else if (module_dirlen) {
-			pathjoin(line, sizeof line, chroot_path, module_dir+1);
-			p = line;
-		} else
-			p = chroot_path;
-
 		if (asprintf(&modname, "RSYNC_MODULE_NAME=%s", name) < 0
-		 || asprintf(&modpath, "RSYNC_MODULE_PATH=%s", p) < 0
+		 || asprintf(&modpath, "RSYNC_MODULE_PATH=%s", full_module_path) < 0
 		 || asprintf(&hostaddr, "RSYNC_HOST_ADDR=%s", addr) < 0
 		 || asprintf(&hostname, "RSYNC_HOST_NAME=%s", host) < 0
 		 || asprintf(&username, "RSYNC_USER_NAME=%s", auth_user) < 0)
@@ -600,7 +610,8 @@ static int rsync_module(int f_in, int f_out, int i, char *addr, char *host)
 					status = -1;
 				if (asprintf(&p, "RSYNC_EXIT_STATUS=%d", status) > 0)
 					putenv(p);
-				system(lp_postxfer_exec(i));
+				if (system(lp_postxfer_exec(i)) < 0)
+					status = -1;
 				_exit(status);
 			}
 		}
@@ -666,24 +677,18 @@ static int rsync_module(int f_in, int f_out, int i, char *addr, char *host)
 		 * a warning, unless a "require chroot" flag is set,
 		 * in which case we fail.
 		 */
-		if (chroot(chroot_path)) {
-			rsyserr(FLOG, errno, "chroot %s failed", chroot_path);
+		if (chroot(module_chdir)) {
+			rsyserr(FLOG, errno, "chroot %s failed", module_chdir);
 			io_printf(f_out, "@ERROR: chroot failed\n");
 			return -1;
 		}
-		if (!change_dir(module_dir, CD_NORMAL))
-			goto chdir_failed;
-		if (module_dirlen)
-			sanitize_paths = 1;
-	} else {
-		if (!change_dir(module_dir, CD_NORMAL)) {
-		  chdir_failed:
-			rsyserr(FLOG, errno, "chdir %s failed\n", module_dir);
-			io_printf(f_out, "@ERROR: chdir failed\n");
-			return -1;
-		}
-		sanitize_paths = 1;
+		module_chdir = module_dir;
 	}
+
+	if (!change_dir(module_chdir, CD_NORMAL))
+		return path_failure(f_out, module_chdir, True);
+	if (module_dirlen || !use_chroot)
+		sanitize_paths = 1;
 
 	if ((munge_symlinks = lp_munge_symlinks(i)) < 0)
 		munge_symlinks = !use_chroot || module_dirlen;
@@ -723,7 +728,11 @@ static int rsync_module(int f_in, int f_out, int i, char *addr, char *host)
 		}
 #endif
 
-		if (setuid(uid)) {
+		if (setuid(uid) < 0
+#ifdef HAVE_SETEUID
+		 || seteuid(uid) < 0
+#endif
+		) {
 			rsyserr(FLOG, errno, "setuid %d failed", (int)uid);
 			io_printf(f_out, "@ERROR: setuid failed\n");
 			return -1;
@@ -857,7 +866,7 @@ static int rsync_module(int f_in, int f_out, int i, char *addr, char *host)
 	 && (use_chroot ? lp_numeric_ids(i) != False : lp_numeric_ids(i) == True))
 		numeric_ids = -1; /* Set --numeric-ids w/o breaking protocol. */
 
-	if (lp_timeout(i) && lp_timeout(i) > io_timeout)
+	if (lp_timeout(i) && (!io_timeout || lp_timeout(i) < io_timeout))
 		set_io_timeout(lp_timeout(i));
 
 	/* If we have some incoming/outgoing chmod changes, append them to
@@ -972,20 +981,23 @@ static void create_pid_file(void)
 	char *pid_file = lp_pid_file();
 	char pidbuf[16];
 	pid_t pid = getpid();
-	int fd;
+	int fd, len;
 
 	if (!pid_file || !*pid_file)
 		return;
 
 	cleanup_set_pid(pid);
 	if ((fd = do_open(pid_file, O_WRONLY|O_CREAT|O_EXCL, 0666 & ~orig_umask)) == -1) {
+	  failure:
 		cleanup_set_pid(0);
 		fprintf(stderr, "failed to create pid file %s: %s\n", pid_file, strerror(errno));
 		rsyserr(FLOG, errno, "failed to create pid file %s", pid_file);
 		exit_cleanup(RERR_FILEIO);
 	}
 	snprintf(pidbuf, sizeof pidbuf, "%ld\n", (long)pid);
-	write(fd, pidbuf, strlen(pidbuf));
+	len = strlen(pidbuf);
+	if (write(fd, pidbuf, len) != len)
+		goto failure;
 	close(fd);
 }
 

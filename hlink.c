@@ -4,7 +4,7 @@
  * Copyright (C) 1996 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
  * Copyright (C) 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2004-2008 Wayne Davison
+ * Copyright (C) 2004-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,13 +30,14 @@ extern int inc_recurse;
 extern int do_xfers;
 extern int link_dest;
 extern int preserve_acls;
+extern int preserve_xattrs;
 extern int make_backups;
 extern int protocol_version;
 extern int remove_source_files;
 extern int stdout_format_has_i;
 extern int maybe_ATTRS_REPORT;
 extern int unsort_ndx;
-extern char *basis_dir[];
+extern char *basis_dir[MAX_BASIS_DIRS+1];
 extern struct file_list *cur_flist;
 
 #ifdef SUPPORT_HARD_LINKS
@@ -56,7 +57,7 @@ static struct file_list *hlink_flist;
 void init_hard_links(void)
 {
 	if (am_sender || protocol_version < 30)
-		dev_tbl = hashtable_create(16, SIZEOF_INT64 == 8);
+		dev_tbl = hashtable_create(16, 1);
 	else if (inc_recurse)
 		prior_hlinks = hashtable_create(1024, 0);
 }
@@ -66,11 +67,12 @@ struct ht_int64_node *idev_find(int64 dev, int64 ino)
 	static struct ht_int64_node *dev_node = NULL;
 	struct hashtable *tbl;
 
-	if (!dev_node || dev_node->key != dev) {
+	/* Note that some OSes have a dev == 0, so increment to avoid storing a 0. */
+	if (!dev_node || dev_node->key != dev+1) {
 		/* We keep a separate hash table of inodes for every device. */
-		dev_node = hashtable_find(dev_tbl, dev, 1);
+		dev_node = hashtable_find(dev_tbl, dev+1, 1);
 		if (!(tbl = dev_node->data))
-			tbl = dev_node->data = hashtable_create(512, SIZEOF_INT64 == 8);
+			tbl = dev_node->data = hashtable_create(512, 1);
 	} else
 		tbl = dev_node->data;
 
@@ -355,9 +357,13 @@ int hard_link_check(struct file_struct *file, int ndx, const char *fname,
 	}
 
 	if (link_stat(prev_name, &prev_st, 0) < 0) {
-		rsyserr(FERROR_XFER, errno, "stat %s failed",
-			full_fname(prev_name));
-		return -1;
+		if (!dry_run || errno != ENOENT) {
+			rsyserr(FERROR_XFER, errno, "stat %s failed", full_fname(prev_name));
+			return -1;
+		}
+		/* A new hard-link will get a new dev & inode, so approximate
+		 * those values in dry-run mode by zeroing them. */
+		memset(&prev_st, 0, sizeof prev_st);
 	}
 
 	if (statret < 0 && basis_dir[0] != NULL) {
@@ -367,6 +373,9 @@ int hard_link_check(struct file_struct *file, int ndx, const char *fname,
 		int j = 0;
 #ifdef SUPPORT_ACLS
 		alt_sx.acc_acl = alt_sx.def_acl = NULL;
+#endif
+#ifdef SUPPORT_XATTRS
+		alt_sx.xattr = NULL;
 #endif
 		do {
 			pathjoin(cmpbuf, MAXPATHLEN, basis_dir[j], fname);
@@ -396,19 +405,37 @@ int hard_link_check(struct file_struct *file, int ndx, const char *fname,
 			sxp->st = alt_sx.st;
 #ifdef SUPPORT_ACLS
 			if (preserve_acls && !S_ISLNK(file->mode)) {
-				if (!ACL_READY(*sxp))
+				free_acl(sxp);
+				if (!ACL_READY(alt_sx))
 					get_acl(cmpbuf, sxp);
 				else {
 					sxp->acc_acl = alt_sx.acc_acl;
 					sxp->def_acl = alt_sx.def_acl;
+					alt_sx.acc_acl = alt_sx.def_acl = NULL;
 				}
 			}
 #endif
-		}
-#ifdef SUPPORT_ACLS
-		else if (preserve_acls)
-			free_acl(&alt_sx);
+#ifdef SUPPORT_XATTRS
+			if (preserve_xattrs) {
+				free_xattr(sxp);
+				if (!XATTR_READY(alt_sx))
+					get_xattr(cmpbuf, sxp);
+				else {
+					sxp->xattr = alt_sx.xattr;
+					alt_sx.xattr = NULL;
+				}
+			}
 #endif
+		} else {
+#ifdef SUPPORT_ACLS
+			if (preserve_acls)
+				free_acl(&alt_sx);
+#endif
+#ifdef SUPPORT_XATTRS
+			if (preserve_xattrs)
+				free_xattr(&alt_sx);
+#endif
+		}
 	}
 
 	if (maybe_hard_link(file, ndx, fname, statret, sxp, prev_name, &prev_st,
@@ -475,6 +502,9 @@ void finish_hard_link(struct file_struct *file, const char *fname, int fin_ndx,
 #ifdef SUPPORT_ACLS
 	prev_sx.acc_acl = prev_sx.def_acl = NULL;
 #endif
+#ifdef SUPPORT_XATTRS
+	prev_sx.xattr = NULL;
+#endif
 
 	while ((ndx = prev_ndx) >= 0) {
 		int val;
@@ -491,6 +521,10 @@ void finish_hard_link(struct file_struct *file, const char *fname, int fin_ndx,
 		if (preserve_acls)
 			free_acl(&prev_sx);
 #endif
+#ifdef SUPPORT_XATTRS
+		if (preserve_xattrs)
+			free_xattr(&prev_sx);
+#endif
 		if (val < 0)
 			continue;
 		if (remove_source_files == 1 && do_xfers)
@@ -500,8 +534,19 @@ void finish_hard_link(struct file_struct *file, const char *fname, int fin_ndx,
 	if (inc_recurse) {
 		int gnum = F_HL_GNUM(file);
 		struct ht_int32_node *node = hashtable_find(prior_hlinks, gnum, 0);
-		assert(node != NULL && node->data != NULL);
-		assert(CVAL(node->data, 0) == 0);
+		if (node == NULL) {
+			rprintf(FERROR, "Unable to find a hlink node for %d (%s)\n", gnum, f_name(file, prev_name));
+			exit_cleanup(RERR_MESSAGEIO);
+		}
+		if (node->data == NULL) {
+			rprintf(FERROR, "Hlink node data for %d is NULL (%s)\n", gnum, f_name(file, prev_name));
+			exit_cleanup(RERR_MESSAGEIO);
+		}
+		if (CVAL(node->data, 0) != 0) {
+			rprintf(FERROR, "Hlink node data for %d already has path=%s (%s)\n",
+				gnum, (char*)node->data, f_name(file, prev_name));
+			exit_cleanup(RERR_MESSAGEIO);
+		}
 		free(node->data);
 		if (!(node->data = strdup(our_name)))
 			out_of_memory("finish_hard_link");

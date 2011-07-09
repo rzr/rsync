@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1992-2001 Andrew Tridgell <tridge@samba.org>
  * Copyright (C) 2001, 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2002-2008 Wayne Davison
+ * Copyright (C) 2002-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -107,6 +107,9 @@ char *client_name(int fd)
 		char *addr = client_addr(fd);
 		struct addrinfo hint, *answer;
 		int err;
+
+		if (strcmp(addr, "0.0.0.0") == 0)
+			return name_buf;
 
 		memset(&hint, 0, sizeof hint);
 

@@ -28,5 +28,14 @@ RSYNC_OPTS=''
 #  Allowed values are 0 - 19 inclusive; 10 is a reasonable value.
 RSYNC_NICE=''
 
+# run rsyncd with ionice?
+#  "ionice" does for IO load what "nice" does for CPU load.
+#  As rsync is often used for backups which aren't all that time-critical,
+#  reducing the rsync IO priority will benefit the rest of the system.
+#  See the manpage for ionice for allowed options.
+#  -c3 is recommended, this will run rsync IO at "idle" priority. Uncomment
+#  the next line to activate this.
+# RSYNC_IONICE='-c3'
+
 # Don't forget to create an appropriate config file,
 # else the daemon will not start.
