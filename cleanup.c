@@ -4,7 +4,7 @@
  * Copyright (C) 1996-2000 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
  * Copyright (C) 2002 Martin Pool
- * Copyright (C) 2003-2009 Wayne Davison
+ * Copyright (C) 2003-2008 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,6 @@
 
 extern int am_server;
 extern int am_daemon;
-extern int am_receiver;
 extern int io_error;
 extern int keep_partial;
 extern int got_xfer_error;
@@ -94,44 +93,36 @@ pid_t cleanup_child_pid = -1;
  **/
 NORETURN void _exit_cleanup(int code, const char *file, int line)
 {
-	static int switch_step = 0;
-	static int exit_code = 0, exit_line = 0;
-	static const char *exit_file = NULL;
+	static int cleanup_step = 0;
+	static int exit_code = 0;
 	static int unmodified_code = 0;
 
 	SIGACTION(SIGUSR1, SIG_IGN);
 	SIGACTION(SIGUSR2, SIG_IGN);
 
-	if (exit_code) { /* Preserve first exit info when recursing. */
+	if (exit_code) /* Preserve first error code when recursing. */
 		code = exit_code;
-		file = exit_file;
-		line = exit_line;
-	}
 
 	/* If this is the exit at the end of the run, the server side
-	 * should not attempt to output a message (see log_exit()). */
+	 * should not attempt to output a message (see log.c). */
 	if (am_server && code == 0)
 		am_server = 2;
 
 	/* Some of our actions might cause a recursive call back here, so we
 	 * keep track of where we are in the cleanup and never repeat a step. */
-	switch (switch_step) {
-#include "case_N.h" /* case 0: */
-		switch_step++;
+	switch (cleanup_step) {
+#include "case_N.h" /* case 0: cleanup_step++; */
 
 		exit_code = unmodified_code = code;
-		exit_file = file;
-		exit_line = line;
 
 		if (verbose > 3) {
 			rprintf(FINFO,
-				"[%s] _exit_cleanup(code=%d, file=%s, line=%d): entered\n",
-				who_am_i(), code, file, line);
+				"_exit_cleanup(code=%d, file=%s, line=%d): entered\n",
+				code, file, line);
 		}
 
 		/* FALLTHROUGH */
 #include "case_N.h"
-		switch_step++;
 
 		if (cleanup_child_pid != -1) {
 			int status;
@@ -145,7 +136,6 @@ NORETURN void _exit_cleanup(int code, const char *file, int line)
 
 		/* FALLTHROUGH */
 #include "case_N.h"
-		switch_step++;
 
 		if (cleanup_got_literal && cleanup_fname && cleanup_new_fname
 		 && keep_partial && handle_partial_dir(cleanup_new_fname, PDIR_CREATE)) {
@@ -163,14 +153,11 @@ NORETURN void _exit_cleanup(int code, const char *file, int line)
 
 		/* FALLTHROUGH */
 #include "case_N.h"
-		switch_step++;
 
-		if (!code || am_server || am_receiver)
-			io_flush(FULL_FLUSH);
+		io_flush(FULL_FLUSH);
 
 		/* FALLTHROUGH */
 #include "case_N.h"
-		switch_step++;
 
 		if (cleanup_fname)
 			do_unlink(cleanup_fname);
@@ -196,18 +183,16 @@ NORETURN void _exit_cleanup(int code, const char *file, int line)
 
 		/* FALLTHROUGH */
 #include "case_N.h"
-		switch_step++;
 
 		if (verbose > 2) {
 			rprintf(FINFO,
-				"[%s] _exit_cleanup(code=%d, file=%s, line=%d): "
+				"_exit_cleanup(code=%d, file=%s, line=%d): "
 				"about to call exit(%d)\n",
-				who_am_i(), unmodified_code, file, line, code);
+				unmodified_code, file, line, code);
 		}
 
 		/* FALLTHROUGH */
 #include "case_N.h"
-		switch_step++;
 
 		if (am_server && code)
 			msleep(100);

@@ -48,7 +48,7 @@ TLS_OBJ = tls.o syscall.o lib/compat.o lib/snprintf.o lib/permstring.o lib/sysxa
 CHECK_PROGS = rsync$(EXEEXT) tls$(EXEEXT) getgroups$(EXEEXT) getfsdev$(EXEEXT) \
 	trimslash$(EXEEXT) t_unsafe$(EXEEXT) wildtest$(EXEEXT)
 
-CHECK_SYMLINKS = testsuite/chown-fake.test testsuite/devices-fake.test testsuite/xattrs-hlink.test
+CHECK_SYMLINKS = testsuite/chown-fake.test testsuite/devices-fake.test
 
 # Objects for CHECK_PROGS to clean
 CHECK_OBJS=tls.o getgroups.o getfsdev.o t_stub.o t_unsafe.o trimslash.o wildtest.o
@@ -59,7 +59,7 @@ CHECK_OBJS=tls.o getgroups.o getfsdev.o t_stub.o t_unsafe.o trimslash.o wildtest
 	$(CC) -I. -I$(srcdir) $(CFLAGS) $(CPPFLAGS) -c $< @CC_SHOBJ_FLAG@
 @OBJ_RESTORE@
 
-all: Makefile rsync$(EXEEXT) @MAKE_MAN@
+all: conf_stop make_stop rsync$(EXEEXT) @MAKE_MAN@
 
 install: all
 	-mkdir -p ${DESTDIR}${bindir}
@@ -123,7 +123,9 @@ gensend: gen
 conf:
 	cd $(srcdir) && $(MAKE) -f prepare-source.mak conf
 
-configure.sh config.h.in: configure.ac aclocal.m4
+conf_stop: configure.sh config.h.in
+
+configure.sh config.h.in: configure.in aclocal.m4
 	@if test -f configure.sh; then cp -p configure.sh configure.sh.old; else touch configure.sh.old; fi
 	@if test -f config.h.in; then cp -p config.h.in config.h.in.old; else touch config.h.in.old; fi
 	autoconf -o configure.sh
@@ -131,42 +133,32 @@ configure.sh config.h.in: configure.ac aclocal.m4
 	@if diff configure.sh configure.sh.old >/dev/null 2>&1; then \
 	    echo "configure.sh is unchanged."; \
 	    rm configure.sh.old; \
-	else \
-	    echo "configure.sh has CHANGED."; \
 	fi
 	@if diff config.h.in config.h.in.old >/dev/null 2>&1; then \
 	    echo "config.h.in is unchanged."; \
 	    rm config.h.in.old; \
-	else \
-	    echo "config.h.in has CHANGED."; \
 	fi
 	@if test -f configure.sh.old -o -f config.h.in.old; then \
-	    if test "$(MAKECMDGOALS)" = reconfigure; then \
-		echo 'Continuing with "make reconfigure".'; \
-	    else \
-		echo 'You may need to run:'; \
-		echo '  make reconfigure'; \
-		exit 1; \
-	    fi \
+	    echo 'Configure files changed -- perhaps run:'; \
+	    echo '  make reconfigure'; \
+	    exit 1; \
 	fi
 
 reconfigure: configure.sh
 	./config.status --recheck
 	./config.status
 
-Makefile: Makefile.in config.status configure.sh config.h.in
+make_stop: Makefile
+
+Makefile: Makefile.in config.status
 	@if test -f Makefile; then cp -p Makefile Makefile.old; else touch Makefile.old; fi
 	@./config.status
 	@if diff Makefile Makefile.old >/dev/null 2>&1; then \
 	    echo "Makefile is unchanged."; \
 	    rm Makefile.old; \
 	else \
-	    if test "$(MAKECMDGOALS)" = reconfigure; then \
-		echo 'Continuing with "make reconfigure".'; \
-	    else \
-		echo "Makefile updated -- rerun your make command."; \
-		exit 1; \
-	    fi \
+	    echo "Makefile updated -- rerun your make command."; \
+	    exit 1; \
 	fi
 
 proto: proto.h-tstamp
@@ -174,7 +166,7 @@ proto: proto.h-tstamp
 proto.h: proto.h-tstamp
 	@if test -f proto.h; then :; else cp -p $(srcdir)/proto.h .; fi
 
-proto.h-tstamp: $(srcdir)/*.c $(srcdir)/lib/compat.c config.h
+proto.h-tstamp: $(srcdir)/*.c $(srcdir)/lib/compat.c
 	perl $(srcdir)/mkproto.pl $(srcdir)/*.c $(srcdir)/lib/compat.c
 
 man: rsync.1 rsyncd.conf.5
@@ -248,9 +240,6 @@ testsuite/chown-fake.test:
 
 testsuite/devices-fake.test:
 	ln -s devices.test $(srcdir)/testsuite/devices-fake.test
-
-testsuite/xattrs-hlink.test:
-	ln -s xattrs.test $(srcdir)/testsuite/xattrs-hlink.test
 
 # This does *not* depend on building or installing: you can use it to
 # check a version installed from a binary or some other source tree,

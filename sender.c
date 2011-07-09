@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1996 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
- * Copyright (C) 2003-2009 Wayne Davison
+ * Copyright (C) 2003-2008 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include "rsync.h"
 
 extern int verbose;
+extern int dry_run;
 extern int do_xfers;
 extern int am_server;
 extern int am_daemon;
@@ -152,7 +153,7 @@ static void write_ndx_and_attrs(int f_out, int ndx, int iflags,
 	if (iflags & ITEM_XNAME_FOLLOWS)
 		write_vstring(f_out, buf, len);
 #ifdef SUPPORT_XATTRS
-	if (preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers)
+	if (preserve_xattrs && iflags & ITEM_REPORT_XATTR && !dry_run)
 		send_xattr_request(fname, file, f_out);
 #endif
 }
@@ -173,7 +174,6 @@ void send_files(int f_in, int f_out)
 	int itemizing = am_server ? logfile_format_has_i : stdout_format_has_i;
 	enum logcode log_code = log_before_transfer ? FLOG : FINFO;
 	int f_xfer = write_batch < 0 ? batch_fd : f_out;
-	int save_io_error = io_error;
 	int ndx, j;
 
 	if (verbose > 2)
@@ -223,7 +223,7 @@ void send_files(int f_in, int f_out)
 			rprintf(FINFO, "send_files(%d, %s%s%s)\n", ndx, path,slash,fname);
 
 #ifdef SUPPORT_XATTRS
-		if (preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers)
+		if (preserve_xattrs && iflags & ITEM_REPORT_XATTR && !dry_run)
 			recv_xattr_request(file, f_in);
 #endif
 
@@ -361,9 +361,6 @@ void send_files(int f_in, int f_out)
 	}
 	if (make_backups < 0)
 		make_backups = -make_backups;
-
-	if (io_error != save_io_error && protocol_version >= 30)
-		send_msg_int(MSG_IO_ERROR, io_error);
 
 	if (verbose > 2)
 		rprintf(FINFO, "send files finished\n");

@@ -295,30 +295,24 @@ pool_boundary(alloc_pool_t p, size_t len)
 }
 
 #define FDPRINT(label, value) \
-	do { \
-		int len = snprintf(buf, sizeof buf, label, value); \
-		if (write(fd, buf, len) != len) \
-			ret = -1; \
-	} while (0)
+	snprintf(buf, sizeof buf, label, value), \
+	write(fd, buf, strlen(buf))
 
 #define FDEXTSTAT(ext) \
-	do { \
-		int len = snprintf(buf, sizeof buf, "  %12ld  %5ld\n", \
-				   (long)ext->free, (long)ext->bound); \
-		if (write(fd, buf, len) != len) \
-			ret = -1; \
-	} while (0)
+	snprintf(buf, sizeof buf, "  %12ld  %5ld\n", \
+		(long) ext->free, \
+		(long) ext->bound), \
+	write(fd, buf, strlen(buf))
 
-int
+void
 pool_stats(alloc_pool_t p, int fd, int summarize)
 {
 	struct alloc_pool *pool = (struct alloc_pool *) p;
 	struct pool_extent	*cur;
 	char buf[BUFSIZ];
-	int ret = 0;
 
 	if (!pool)
-		return ret;
+		return;
 
 	FDPRINT("  Extent size:       %12ld\n",	(long)	pool->size);
 	FDPRINT("  Alloc quantum:     %12ld\n",	(long)	pool->quantum);
@@ -330,16 +324,13 @@ pool_stats(alloc_pool_t p, int fd, int summarize)
 	FDPRINT("  Bytes freed:       %12.0f\n", (double) pool->b_freed);
 
 	if (summarize)
-		return ret;
+		return;
 
 	if (!pool->extents)
-		return ret;
+		return;
 
-	if (write(fd, "\n", 1) != 1)
-		ret = -1;
+	write(fd, "\n", 1);
 
 	for (cur = pool->extents; cur; cur = cur->next)
 		FDEXTSTAT(cur);
-
-	return ret;
 }

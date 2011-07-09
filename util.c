@@ -4,7 +4,7 @@
  * Copyright (C) 1996-2000 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
  * Copyright (C) 2001, 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2003-2009 Wayne Davison
+ * Copyright (C) 2003-2008 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,10 +24,10 @@
 #include "ifuncs.h"
 
 extern int verbose;
+extern int dry_run;
 extern int module_id;
 extern int modify_window;
 extern int relative_paths;
-extern int preserve_times;
 extern int human_readable;
 extern int preserve_xattrs;
 extern char *module_dir;
@@ -123,11 +123,12 @@ NORETURN void overflow_exit(const char *str)
 	exit_cleanup(RERR_MALLOC);
 }
 
-/* This returns 0 for success, 1 for a symlink if symlink time-setting
- * is not possible, or -1 for any other error. */
 int set_modtime(const char *fname, time_t modtime, mode_t mode)
 {
-	static int switch_step = 0;
+#if !defined HAVE_LUTIMES || !defined HAVE_UTIMES
+	if (S_ISLNK(mode))
+		return 1;
+#endif
 
 	if (verbose > 2) {
 		rprintf(FINFO, "set modtime of %s to (%ld) %s",
@@ -135,49 +136,38 @@ int set_modtime(const char *fname, time_t modtime, mode_t mode)
 			asctime(localtime(&modtime)));
 	}
 
-	switch (switch_step) {
-#ifdef HAVE_UTIMENSAT
-#include "case_N.h"
-		if (do_utimensat(fname, modtime, 0) == 0)
-			break;
-		if (errno != ENOSYS)
-			return -1;
-		switch_step++;
-		/* FALLTHROUGH */
-#endif
+	if (dry_run)
+		return 0;
 
-#ifdef HAVE_LUTIMES
-#include "case_N.h"
-		if (do_lutimes(fname, modtime, 0) == 0)
-			break;
-		if (errno != ENOSYS)
-			return -1;
-		switch_step++;
-		/* FALLTHROUGH */
-#endif
-
-#include "case_N.h"
-		switch_step++;
-		if (preserve_times & PRESERVE_LINK_TIMES) {
-			preserve_times &= ~PRESERVE_LINK_TIMES;
-			if (S_ISLNK(mode))
-				return 1;
-		}
-		/* FALLTHROUGH */
-
-#include "case_N.h"
+	{
 #ifdef HAVE_UTIMES
-		if (do_utimes(fname, modtime, 0) == 0)
-			break;
+		struct timeval t[2];
+		t[0].tv_sec = time(NULL);
+		t[0].tv_usec = 0;
+		t[1].tv_sec = modtime;
+		t[1].tv_usec = 0;
+# ifdef HAVE_LUTIMES
+		if (S_ISLNK(mode)) {
+			if (lutimes(fname, t) < 0)
+				return errno == ENOSYS ? 1 : -1;
+			return 0;
+		}
+# endif
+		return utimes(fname, t);
+#elif defined HAVE_STRUCT_UTIMBUF
+		struct utimbuf tbuf;
+		tbuf.actime = time(NULL);
+		tbuf.modtime = modtime;
+		return utime(fname,&tbuf);
+#elif defined HAVE_UTIME
+		time_t t[2];
+		t[0] = time(NULL);
+		t[1] = modtime;
+		return utime(fname,t);
 #else
-		if (do_utime(fname, modtime, 0) == 0)
-			break;
+#error No file-time-modification routine found!
 #endif
-
-		return -1;
 	}
-
-	return 0;
 }
 
 /* This creates a new directory with default permissions.  Since there
@@ -816,8 +806,7 @@ int count_dir_elements(const char *p)
 	return cnt;
 }
 
-/* Turns multiple adjacent slashes into a single slash (possible exception:
- * the preserving of two leading slashes at the start), drops all leading or
+/* Turns multiple adjacent slashes into a single slash, drops all leading or
  * interior "." elements unless CFN_KEEP_DOT_DIRS is flagged.  Will also drop
  * a trailing '.' after a '/' if CFN_DROP_TRAILING_DOT_DIR is flagged, removes
  * a trailing slash (perhaps after removing the aforementioned dot) unless
@@ -832,16 +821,9 @@ unsigned int clean_fname(char *name, int flags)
 	if (!name)
 		return 0;
 
-	if ((anchored = *f == '/') != 0) {
+	if ((anchored = *f == '/') != 0)
 		*t++ = *f++;
-#ifdef __CYGWIN__
-		/* If there are exactly 2 slashes at the start, preserve
-		 * them.  Would break daemon excludes unless the paths are
-		 * really treated differently, so used this sparingly. */
-		if (*f == '/' && f[1] != '/')
-			*t++ = *f++;
-#endif
-	} else if (flags & CFN_KEEP_DOT_DIRS && *f == '.' && f[1] == '/') {
+	else if (flags & CFN_KEEP_DOT_DIRS && *f == '.' && f[1] == '/') {
 		*t++ = *f++;
 		*t++ = *f++;
 	}
@@ -997,10 +979,7 @@ int change_dir(const char *dir, int set_path_only)
 
 	if (!initialised) {
 		initialised = 1;
-		if (getcwd(curr_dir, sizeof curr_dir - 1) == NULL) {
-			rsyserr(FERROR, errno, "getcwd()");
-			exit_cleanup(RERR_FILESELECT);
-		}
+		getcwd(curr_dir, sizeof curr_dir - 1);
 		curr_dir_len = strlen(curr_dir);
 	}
 
@@ -1044,34 +1023,6 @@ int change_dir(const char *dir, int set_path_only)
 		rprintf(FINFO, "[%s] change_dir(%s)\n", who_am_i(), curr_dir);
 
 	return 1;
-}
-
-/* This will make a relative path absolute and clean it up via clean_fname().
- * Returns the string, which might be newly allocated, or NULL on error. */
-char *normalize_path(char *path, BOOL force_newbuf, unsigned int *len_ptr)
-{
-	unsigned int len;
-
-	if (*path != '/') { /* Make path absolute. */
-		int len = strlen(path);
-		if (curr_dir_len + 1 + len >= sizeof curr_dir)
-			return NULL;
-		curr_dir[curr_dir_len] = '/';
-		memcpy(curr_dir + curr_dir_len + 1, path, len + 1);
-		if (!(path = strdup(curr_dir)))
-			out_of_memory("normalize_path");
-		curr_dir[curr_dir_len] = '\0';
-	} else if (force_newbuf) {
-		if (!(path = strdup(path)))
-			out_of_memory("normalize_path");
-	}
-
-	len = clean_fname(path, CFN_COLLAPSE_DOT_DOT_DIRS | CFN_DROP_TRAILING_DOT_DIR);
-
-	if (len_ptr)
-		*len_ptr = len;
-
-	return path;
 }
 
 /**
@@ -1178,12 +1129,11 @@ int handle_partial_dir(const char *fname, int create)
 	return 1;
 }
 
-/* Determine if a symlink points outside the current directory tree.
+/**
+ * Determine if a symlink points outside the current directory tree.
  * This is considered "unsafe" because e.g. when mirroring somebody
  * else's machine it might allow them to establish a symlink to
  * /etc/passwd, and then read it through a web server.
- *
- * Returns 1 if unsafe, 0 if safe.
  *
  * Null symlinks and absolute symlinks are always unsafe.
  *
@@ -1192,11 +1142,17 @@ int handle_partial_dir(const char *fname, int create)
  * transferred directory.  We are not allowed to go back up and
  * reenter.
  *
- * "dest" is the target of the symlink in question.
+ * @param dest Target of the symlink in question.
  *
- * "src" is the top source directory currently applicable at the level
- * of the referenced symlink.  This is usually the symlink's full path
- * (including its name), as referenced from the root of the transfer. */
+ * @param src Top source directory currently applicable.  Basically this
+ * is the first parameter to rsync in a simple invocation, but it's
+ * modified by flist.c in slightly complex ways.
+ *
+ * @retval True if unsafe
+ * @retval False is unsafe
+ *
+ * @sa t_unsafe.c
+ **/
 int unsafe_symlink(const char *dest, const char *src)
 {
 	const char *name, *slash;
@@ -1208,33 +1164,33 @@ int unsafe_symlink(const char *dest, const char *src)
 
 	/* find out what our safety margin is */
 	for (name = src; (slash = strchr(name, '/')) != 0; name = slash+1) {
-		/* ".." segment starts the count over.  "." segment is ignored. */
-		if (*name == '.' && (name[1] == '/' || (name[1] == '.' && name[2] == '/'))) {
-			if (name[1] == '.')
-				depth = 0;
-		} else
+		if (strncmp(name, "../", 3) == 0) {
+			depth = 0;
+		} else if (strncmp(name, "./", 2) == 0) {
+			/* nothing */
+		} else {
 			depth++;
-		while (slash[1] == '/') slash++; /* just in case src isn't clean */
+		}
 	}
-	if (*name == '.' && name[1] == '.' && name[2] == '\0')
+	if (strcmp(name, "..") == 0)
 		depth = 0;
 
 	for (name = dest; (slash = strchr(name, '/')) != 0; name = slash+1) {
-		if (*name == '.' && (name[1] == '/' || (name[1] == '.' && name[2] == '/'))) {
-			if (name[1] == '.') {
-				/* if at any point we go outside the current directory
-				   then stop - it is unsafe */
-				if (--depth < 0)
-					return 1;
-			}
-		} else
+		if (strncmp(name, "../", 3) == 0) {
+			/* if at any point we go outside the current directory
+			   then stop - it is unsafe */
+			if (--depth < 0)
+				return 1;
+		} else if (strncmp(name, "./", 2) == 0) {
+			/* nothing */
+		} else {
 			depth++;
-		while (slash[1] == '/') slash++;
+		}
 	}
-	if (*name == '.' && name[1] == '.' && name[2] == '\0')
+	if (strcmp(name, "..") == 0)
 		depth--;
 
-	return depth < 0;
+	return (depth < 0);
 }
 
 #define HUMANIFY(mult) \
@@ -1635,39 +1591,6 @@ int bitbag_next_bit(struct bitbag *bb, int after)
 	}
 
 	return -1;
-}
-
-void flist_ndx_push(flist_ndx_list *lp, int ndx)
-{
-	struct flist_ndx_item *item;
-
-	if (!(item = new(struct flist_ndx_item)))
-		out_of_memory("flist_ndx_push");
-	item->next = NULL;
-	item->ndx = ndx;
-	if (lp->tail)
-		lp->tail->next = item;
-	else
-		lp->head = item;
-	lp->tail = item;
-}
-
-int flist_ndx_pop(flist_ndx_list *lp)
-{
-	struct flist_ndx_item *next;
-	int ndx;
-
-	if (!lp->head)
-		return -1;
-
-	ndx = lp->head->ndx;
-	next = lp->head->next;
-	free(lp->head);
-	lp->head = next;
-	if (!next)
-		lp->tail = NULL;
-
-	return ndx;
 }
 
 void *expand_item_list(item_list *lp, size_t item_size,

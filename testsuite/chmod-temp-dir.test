@@ -13,19 +13,12 @@
 
 hands_setup
 
-tmpdir2=$RSYNC_TEST_TMP
-if [ x"$tmpdir2" = x ]; then
-    tmpdir2=/tmp
-fi
+tmpdir2=/tmp
 sdev=`$TOOLDIR/getfsdev $scratchdir`
 tdev=`$TOOLDIR/getfsdev $tmpdir2`
 if [ x$sdev = x$tdev ]; then
     tmpdir2=/var/tmp
-    if [ -d $tmpdir2 ]; then
-	tdev=`$TOOLDIR/getfsdev $tmpdir2`
-    else
-	tdev="$sdev"
-    fi
+    tdev=`$TOOLDIR/getfsdev $tmpdir2`
     [ x$sdev = x$tdev ] && test_skipped "Can't find a tmp dir on a different file system"
 fi
 
