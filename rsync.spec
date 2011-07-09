@@ -13,7 +13,7 @@ Group:      Applications/Internet
 License:    GPLv3+
 URL:        http://rsync.samba.org/
 Source0:    http://rsync.samba.org/ftp/rsync/src/rsync-%{version}.tar.gz
-Source1:    rsync
+Source1:    rsync.service
 Source100:  rsync.yaml
 BuildRequires:  pkgconfig(popt)
 BuildRequires:  libacl-devel
