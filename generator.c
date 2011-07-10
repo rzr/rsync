@@ -4,7 +4,7 @@
  * Copyright (C) 1996-2000 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
  * Copyright (C) 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2003-2008 Wayne Davison
+ * Copyright (C) 2003-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -44,8 +44,6 @@ extern int preserve_hard_links;
 extern int preserve_executability;
 extern int preserve_perms;
 extern int preserve_times;
-extern int uid_ndx;
-extern int gid_ndx;
 extern int delete_mode;
 extern int delete_before;
 extern int delete_during;
@@ -76,7 +74,7 @@ extern int fuzzy_basis;
 extern int always_checksum;
 extern int checksum_len;
 extern char *partial_dir;
-extern char *basis_dir[];
+extern char *basis_dir[MAX_BASIS_DIRS+1];
 extern int compare_dest;
 extern int copy_dest;
 extern int link_dest;
@@ -169,19 +167,12 @@ static enum delret delete_item(char *fbuf, uint16 mode, uint16 flags)
 		do_chmod(fbuf, mode | S_IWUSR);
 
 	if (S_ISDIR(mode) && !(flags & DEL_DIR_IS_EMPTY)) {
-		int save_uid_ndx = uid_ndx;
 		/* This only happens on the first call to delete_item() since
 		 * delete_dir_contents() always calls us w/DEL_DIR_IS_EMPTY. */
-		if (!uid_ndx)
-			uid_ndx = ++file_extra_cnt;
 		ignore_perishable = 1;
 		/* If DEL_RECURSE is not set, this just reports emptiness. */
 		ret = delete_dir_contents(fbuf, flags);
 		ignore_perishable = 0;
-		if (!save_uid_ndx) {
-			--file_extra_cnt;
-			uid_ndx = 0;
-		}
 		if (ret == DR_NOT_EMPTY || ret == DR_AT_LIMIT)
 			goto check_ret;
 		/* OK: try to delete the directory. */
@@ -294,7 +285,7 @@ static enum delret delete_dir_contents(char *fname, uint16 flags)
 		}
 
 		strlcpy(p, fp->basename, remainder);
-		if (!(fp->mode & S_IWUSR) && !am_root && (uid_t)F_OWNER(fp) == our_uid)
+		if (!(fp->mode & S_IWUSR) && !am_root && fp->flags & FLAG_OWNED_BY_US)
 			do_chmod(fname, fp->mode | S_IWUSR);
 		/* Save stack by recursing to ourself directly. */
 		if (S_ISDIR(fp->mode)) {
@@ -472,7 +463,6 @@ static void delete_in_dir(char *fbuf, struct file_struct *file, dev_t *fs_dev)
 	struct file_list *dirlist;
 	char delbuf[MAXPATHLEN];
 	int dlen, i;
-	int save_uid_ndx = uid_ndx;
 
 	if (!fbuf) {
 		change_local_filter_dir(NULL, 0, 0);
@@ -504,9 +494,6 @@ static void delete_in_dir(char *fbuf, struct file_struct *file, dev_t *fs_dev)
 			return;
 	}
 
-	if (!uid_ndx)
-		uid_ndx = ++file_extra_cnt;
-
 	dirlist = get_dirlist(fbuf, dlen, 0);
 
 	/* If an item in dirlist is not found in flist, delete it
@@ -521,9 +508,12 @@ static void delete_in_dir(char *fbuf, struct file_struct *file, dev_t *fs_dev)
 					f_name(fp, NULL));
 			continue;
 		}
-		if (flist_find(cur_flist, fp) < 0) {
+		/* Here we want to match regardless of file type.  Replacement
+		 * of a file with one of another type is handled separately by
+		 * a delete_item call with a DEL_MAKE_ROOM flag. */
+		if (flist_find_ignore_dirness(cur_flist, fp) < 0) {
 			int flags = DEL_RECURSE;
-			if (!(fp->mode & S_IWUSR) && !am_root && (uid_t)F_OWNER(fp) == our_uid)
+			if (!(fp->mode & S_IWUSR) && !am_root && fp->flags & FLAG_OWNED_BY_US)
 				flags |= DEL_NO_UID_WRITE;
 			f_name(fp, delbuf);
 			if (delete_during == 2) {
@@ -535,11 +525,6 @@ static void delete_in_dir(char *fbuf, struct file_struct *file, dev_t *fs_dev)
 	}
 
 	flist_free(dirlist);
-
-	if (!save_uid_ndx) {
-		--file_extra_cnt;
-		uid_ndx = 0;
-	}
 }
 
 /* This deletes any files on the receiving side that are not present on the
@@ -579,45 +564,100 @@ static void do_delete_pass(void)
 		rprintf(FINFO, "                    \r");
 }
 
-int unchanged_attrs(const char *fname, struct file_struct *file, stat_x *sxp)
+static inline int time_differs(struct file_struct *file, stat_x *sxp)
 {
-#if !defined HAVE_LUTIMES || !defined HAVE_UTIMES
-	if (S_ISLNK(file->mode)) {
-		;
-	} else
-#endif
-	if (preserve_times && cmp_time(sxp->st.st_mtime, file->modtime) != 0)
-		return 0;
+	return cmp_time(sxp->st.st_mtime, file->modtime);
+}
 
-	if (preserve_perms) {
-		if (!BITS_EQUAL(sxp->st.st_mode, file->mode, CHMOD_BITS))
-			return 0;
-	} else if (preserve_executability
-	 && ((sxp->st.st_mode & 0111 ? 1 : 0) ^ (file->mode & 0111 ? 1 : 0)))
-		return 0;
+static inline int perms_differ(struct file_struct *file, stat_x *sxp)
+{
+	if (preserve_perms)
+		return !BITS_EQUAL(sxp->st.st_mode, file->mode, CHMOD_BITS);
 
+	if (preserve_executability)
+		return (sxp->st.st_mode & 0111 ? 1 : 0) ^ (file->mode & 0111 ? 1 : 0);
+
+	return 0;
+}
+
+static inline int ownership_differs(struct file_struct *file, stat_x *sxp)
+{
 	if (am_root && uid_ndx && sxp->st.st_uid != (uid_t)F_OWNER(file))
-		return 0;
+		return 1;
 
 	if (gid_ndx && !(file->flags & FLAG_SKIP_GROUP) && sxp->st.st_gid != (gid_t)F_GROUP(file))
-		return 0;
+		return 1;
+
+	return 0;
+}
 
 #ifdef SUPPORT_ACLS
-	if (preserve_acls && !S_ISLNK(file->mode)) {
+static inline int acls_differ(const char *fname, struct file_struct *file, stat_x *sxp)
+{
+	if (preserve_acls) {
 		if (!ACL_READY(*sxp))
 			get_acl(fname, sxp);
-		if (set_acl(NULL, file, sxp) == 0)
-			return 0;
+		if (set_acl(NULL, file, sxp, file->mode))
+			return 1;
 	}
+
+	return 0;
+}
 #endif
+
 #ifdef SUPPORT_XATTRS
+static inline int xattrs_differ(const char *fname, struct file_struct *file, stat_x *sxp)
+{
 	if (preserve_xattrs) {
 		if (!XATTR_READY(*sxp))
 			get_xattr(fname, sxp);
 		if (xattr_diff(file, sxp, 0))
-			return 0;
+			return 1;
 	}
+
+	return 0;
+}
 #endif
+
+int unchanged_attrs(const char *fname, struct file_struct *file, stat_x *sxp)
+{
+	if (S_ISLNK(file->mode)) {
+#ifdef CAN_SET_SYMLINK_TIMES
+		if (preserve_times & PRESERVE_LINK_TIMES && time_differs(file, sxp))
+			return 0;
+#endif
+#ifdef CAN_CHMOD_SYMLINK
+		if (perms_differ(file, sxp))
+			return 0;
+#endif
+#ifndef CAN_CHOWN_SYMLINK
+		if (ownership_differs(file, sxp))
+			return 0;
+#endif
+#if defined SUPPORT_ACLS && 0 /* no current symlink-ACL support */
+		if (acls_differ(fname, file, sxp))
+			return 0;
+#endif
+#if defined SUPPORT_XATTRS && !defined NO_SYMLINK_XATTRS
+		if (xattrs_differ(fname, file, sxp))
+			return 0;
+#endif
+	} else {
+		if (preserve_times && time_differs(file, sxp))
+			return 0;
+		if (perms_differ(file, sxp))
+			return 0;
+		if (ownership_differs(file, sxp))
+			return 0;
+#ifdef SUPPORT_ACLS
+		if (acls_differ(fname, file, sxp))
+			return 0;
+#endif
+#ifdef SUPPORT_XATTRS
+		if (xattrs_differ(fname, file, sxp))
+			return 0;
+#endif
+	}
 
 	return 1;
 }
@@ -628,12 +668,9 @@ void itemize(const char *fnamecmp, struct file_struct *file, int ndx, int statre
 {
 	if (statret >= 0) { /* A from-dest-dir statret can == 1! */
 		int keep_time = !preserve_times ? 0
-		    : S_ISDIR(file->mode) ? preserve_times > 1 :
-#if defined HAVE_LUTIMES && defined HAVE_UTIMES
-		    1;
-#else
-		    !S_ISLNK(file->mode);
-#endif
+		    : S_ISDIR(file->mode) ? preserve_times & PRESERVE_DIR_TIMES
+		    : S_ISLNK(file->mode) ? preserve_times & PRESERVE_LINK_TIMES
+		    : 1;
 
 		if (S_ISREG(file->mode) && F_LENGTH(file) != sxp->st.st_size)
 			iflags |= ITEM_REPORT_SIZE;
@@ -665,7 +702,7 @@ void itemize(const char *fnamecmp, struct file_struct *file, int ndx, int statre
 		if (preserve_acls && !S_ISLNK(file->mode)) {
 			if (!ACL_READY(*sxp))
 				get_acl(fnamecmp, sxp);
-			if (set_acl(NULL, file, sxp) == 0)
+			if (set_acl(NULL, file, sxp, file->mode))
 				iflags |= ITEM_REPORT_ACL;
 		}
 #endif
@@ -697,7 +734,7 @@ void itemize(const char *fnamecmp, struct file_struct *file, int ndx, int statre
 			if (iflags & ITEM_XNAME_FOLLOWS)
 				write_vstring(sock_f_out, xname, strlen(xname));
 #ifdef SUPPORT_XATTRS
-			if (preserve_xattrs && !dry_run
+			if (preserve_xattrs && do_xfers
 			 && iflags & (ITEM_REPORT_XATTR|ITEM_TRANSFER)) {
 				send_xattr_request(NULL, file,
 					iflags & ITEM_REPORT_XATTR ? sock_f_out : -1);
@@ -757,6 +794,12 @@ static void sum_sizes_sqroot(struct sum_struct *sum, int64 len)
 	int32 blength;
 	int s2length;
 	int64 l;
+
+	if (len < 0) {
+		/* The file length overflowed our int64 var, so we can't process this file. */
+		sum->count = -1; /* indicate overflow error */
+		return;
+	}
 
 	if (block_size)
 		blength = block_size;
@@ -1121,8 +1164,8 @@ static int try_dests_non(struct file_struct *file, char *fname, int ndx,
 		}
 		switch (type) {
 		case TYPE_DIR:
-			break;
 		case TYPE_SPECIAL:
+			break;
 		case TYPE_DEVICE:
 			devp = F_RDEV_P(file);
 			if (sxp->st.st_rdev != MAKEDEV(DEV_MAJOR(devp), DEV_MINOR(devp)))
@@ -1297,6 +1340,12 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 		skip_dir = NULL;
 	}
 
+#ifdef SUPPORT_ACLS
+	sx.acc_acl = sx.def_acl = NULL;
+#endif
+#ifdef SUPPORT_XATTRS
+	sx.xattr = NULL;
+#endif
 	if (daemon_filter_list.head && (*fname != '.' || fname[1])) {
 		if (check_filter(&daemon_filter_list, FLOG, fname, is_dir) < 0) {
 			if (is_dir < 0)
@@ -1314,12 +1363,6 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 		}
 	}
 
-#ifdef SUPPORT_ACLS
-	sx.acc_acl = sx.def_acl = NULL;
-#endif
-#ifdef SUPPORT_XATTRS
-	sx.xattr = NULL;
-#endif
 	if (dry_run > 1 || (dry_missing_dir && is_below(file, dry_missing_dir))) {
 	  parent_is_dry_missing:
 		if (fuzzy_dirlist) {
@@ -1358,7 +1401,7 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 
 		if (need_fuzzy_dirlist && S_ISREG(file->mode)) {
 			strlcpy(fnamecmpbuf, dn, sizeof fnamecmpbuf);
-			fuzzy_dirlist = get_dirlist(fnamecmpbuf, -1, 1);
+			fuzzy_dirlist = get_dirlist(fnamecmpbuf, -1, GDL_IGNORE_FILTER_RULES);
 			need_fuzzy_dirlist = 0;
 		}
 
@@ -1399,9 +1442,18 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 		goto cleanup;
 	}
 
+	fnamecmp = fname;
+
 	if (is_dir) {
+		mode_t added_perms;
 		if (!implied_dirs && file->flags & FLAG_IMPLIED_DIR)
 			goto cleanup;
+		if (am_root < 0) {
+			/* For --fake-super, the dir must be useable by the copying
+			 * user, just like it would be for root. */
+			added_perms = S_IRUSR|S_IWUSR|S_IXUSR;
+		} else
+			added_perms = 0;
 		if (is_dir < 0) {
 			/* In inc_recurse mode we want to make sure any missing
 			 * directories get created while we're still processing
@@ -1412,7 +1464,7 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 			 && (S_ISDIR(sx.st.st_mode)
 			  || delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_DIR) != 0))
 				goto cleanup; /* Any errors get reported later. */
-			if (do_mkdir(fname, file->mode & 0700) == 0)
+			if (do_mkdir(fname, (file->mode|added_perms) & 0700) == 0)
 				file->flags |= FLAG_DIR_CREATED;
 			goto cleanup;
 		}
@@ -1446,17 +1498,19 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 				itemizing = 0;
 				code = FNONE;
 				statret = 1;
-			} else if (j >= 0)
+			} else if (j >= 0) {
 				statret = 1;
+				fnamecmp = fnamecmpbuf;
+			}
 		}
 		if (itemizing && f_out != -1) {
-			itemize(fname, file, ndx, statret, &sx,
+			itemize(fnamecmp, file, ndx, statret, &sx,
 				statret ? ITEM_LOCAL_CHANGE : 0, 0, NULL);
 		}
-		if (real_ret != 0 && do_mkdir(fname,file->mode) < 0 && errno != EEXIST) {
+		if (real_ret != 0 && do_mkdir(fname,file->mode|added_perms) < 0 && errno != EEXIST) {
 			if (!relative_paths || errno != ENOENT
-			    || create_directory_path(fname) < 0
-			    || (do_mkdir(fname, file->mode) < 0 && errno != EEXIST)) {
+			 || create_directory_path(fname) < 0
+			 || (do_mkdir(fname, file->mode|added_perms) < 0 && errno != EEXIST)) {
 				rsyserr(FERROR_XFER, errno,
 					"recv_generator: mkdir %s failed",
 					full_fname(fname));
@@ -1468,13 +1522,6 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 				goto cleanup;
 			}
 		}
-#ifdef SUPPORT_XATTRS
-		if (preserve_xattrs && statret == 1)
-			copy_xattrs(fnamecmpbuf, fname);
-#endif
-		if (set_file_attrs(fname, file, real_ret ? NULL : &real_sx, NULL, 0)
-		    && verbose && code != FNONE && f_out != -1)
-			rprintf(code, "%s/\n", fname);
 
 		/* We need to ensure that the dirs in the transfer have writable
 		 * permissions during the time we are putting files within them.
@@ -1490,6 +1537,14 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 			need_retouch_dir_perms = 1;
 		}
 #endif
+
+#ifdef SUPPORT_XATTRS
+		if (preserve_xattrs && statret == 1)
+			copy_xattrs(fnamecmpbuf, fname);
+#endif
+		if (set_file_attrs(fname, file, real_ret ? NULL : &real_sx, NULL, 0)
+		    && verbose && code != FNONE && f_out != -1)
+			rprintf(code, "%s/\n", fname);
 
 		if (real_ret != 0 && one_file_system)
 			real_sx.st.st_dev = filesystem_dev;
@@ -1529,11 +1584,14 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 		const char *sl = F_SYMLINK(file);
 		if (safe_symlinks && unsafe_symlink(sl, fname)) {
 			if (verbose) {
-				if (solo_file)
+				if (solo_file) {
+					/* fname contains the destination path, but we
+					 * want to report the source path. */
 					fname = f_name(file, NULL);
+				}
 				rprintf(FINFO,
-					"ignoring unsafe symlink %s -> \"%s\"\n",
-					full_fname(fname), sl);
+					"ignoring unsafe symlink \"%s\" -> \"%s\"\n",
+					fname, sl);
 			}
 			return;
 		}
@@ -1610,8 +1668,12 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 
 	if ((am_root && preserve_devices && IS_DEVICE(file->mode))
 	 || (preserve_specials && IS_SPECIAL(file->mode))) {
-		uint32 *devp = F_RDEV_P(file);
-		dev_t rdev = MAKEDEV(DEV_MAJOR(devp), DEV_MINOR(devp));
+		dev_t rdev;
+		if (IS_DEVICE(file->mode)) {
+			uint32 *devp = F_RDEV_P(file);
+			rdev = MAKEDEV(DEV_MAJOR(devp), DEV_MINOR(devp));
+		} else
+			rdev = 0;
 		if (statret == 0) {
 			int del_for_flag;
 			if (IS_DEVICE(file->mode)) {
@@ -1625,7 +1687,7 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 			}
 			if (statret == 0
 			 && BITS_EQUAL(sx.st.st_mode, file->mode, _S_IFMT)
-			 && sx.st.st_rdev == rdev) {
+			 && (IS_SPECIAL(sx.st.st_mode) || sx.st.st_rdev == rdev)) {
 				/* The device or special file is identical. */
 				set_file_attrs(fname, file, &sx, NULL, maybe_ATTRS_REPORT);
 				if (itemizing)
@@ -1723,7 +1785,6 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 		goto cleanup;
 	}
 
-	fnamecmp = fname;
 	fnamecmp_type = FNAMECMP_FNAME;
 
 	if (statret == 0 && !S_ISREG(sx.st.st_mode)) {
@@ -2026,6 +2087,7 @@ static void touch_up_dirs(struct file_list *flist, int ndx)
 	static int counter = 0;
 	struct file_struct *file;
 	char *fname;
+	BOOL fix_dir_perms;
 	int i, start, end;
 
 	if (ndx < 0) {
@@ -2046,11 +2108,13 @@ static void touch_up_dirs(struct file_list *flist, int ndx)
 			rprintf(FINFO, "touch_up_dirs: %s (%d)\n",
 				NS(fname), i);
 		}
+		/* Be sure not to retouch permissions with --fake-super. */
+		fix_dir_perms = !am_root && !(file->mode & S_IWUSR);
 		if (!F_IS_ACTIVE(file) || file->flags & FLAG_MISSING_DIR
-		 || (!need_retouch_dir_times && file->mode & S_IWUSR))
+		 || !(need_retouch_dir_times || fix_dir_perms))
 			continue;
 		fname = f_name(file, NULL);
-		if (!(file->mode & S_IWUSR))
+		if (fix_dir_perms)
 			do_chmod(fname, file->mode);
 		if (need_retouch_dir_times) {
 			STRUCT_STAT st;
@@ -2134,10 +2198,9 @@ void check_for_finished_files(int itemizing, enum logcode code, int check_redo)
 		if (first_flist->in_progress || first_flist->to_redo)
 			break;
 
-		if (!read_batch) {
-			write_ndx(sock_f_out, NDX_DONE);
+		write_ndx(sock_f_out, NDX_DONE);
+		if (!read_batch)
 			maybe_flush_socket(1);
-		}
 
 		if (delete_during == 2 || !dir_tweaking) {
 			/* Skip directory touch-up. */
@@ -2175,7 +2238,7 @@ void generate_files(int f_out, const char *local_name)
 	}
 	solo_file = local_name;
 	dir_tweaking = !(list_only || solo_file || dry_run);
-	need_retouch_dir_times = preserve_times > 1;
+	need_retouch_dir_times = preserve_times & PRESERVE_DIR_TIMES;
 	loopchk_limit = allowed_lull ? allowed_lull * 5 : 200;
 	symlink_timeset_failed_flags = ITEM_REPORT_TIME
 	    | (protocol_version >= 30 || !am_server ? ITEM_REPORT_TIMEFAIL : 0);
@@ -2206,7 +2269,7 @@ void generate_files(int f_out, const char *local_name)
 	/* Since we often fill up the outgoing socket and then just sit around
 	 * waiting for the other 2 processes to do their thing, we don't want
 	 * to exit on a timeout.  If the data stops flowing, the receiver will
-	 * notice that and let us know via the redo pipe (or its closing). */
+	 * notice that and let us know via the message pipe (or its closing). */
 	ignore_timeout = 1;
 
 	dflt_perms = (ACCESSPERMS & ~orig_umask);
@@ -2300,6 +2363,7 @@ void generate_files(int f_out, const char *local_name)
 		rprintf(FINFO, "generate_files phase=%d\n", phase);
 
 	write_ndx(f_out, NDX_DONE);
+
 	/* Reduce round-trip lag-time for a useless delay-updates phase. */
 	if (protocol_version >= 29 && !delay_updates)
 		write_ndx(f_out, NDX_DONE);

@@ -1,7 +1,7 @@
 /*
  * Routines to provide a memory-efficient hashtable.
  *
- * Copyright (C) 2007-2008 Wayne Davison
+ * Copyright (C) 2007-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,7 +41,7 @@ struct hashtable *hashtable_create(int size, int key64)
 	tbl->size = size;
 	tbl->entries = 0;
 	tbl->node_size = node_size;
-	tbl->key64 = key64;
+	tbl->key64 = key64 ? 1 : 0;
 
 	return tbl;
 }
@@ -59,6 +59,11 @@ void *hashtable_find(struct hashtable *tbl, int64 key, int allocate_if_missing)
 	int key64 = tbl->key64;
 	struct ht_int32_node *node;
 	uint32 ndx;
+
+	if (key64 ? key == 0 : (int32)key == 0) {
+		rprintf(FERROR, "Internal hashtable error: illegal key supplied!\n");
+		exit_cleanup(RERR_MESSAGEIO);
+	}
 
 	if (allocate_if_missing && tbl->entries > HASH_LOAD_LIMIT(tbl->size)) {
 		void *old_nodes = tbl->nodes;
@@ -87,7 +92,7 @@ void *hashtable_find(struct hashtable *tbl, int64 key, int allocate_if_missing)
 		uchar buf[4], *keyp = buf;
 		int i;
 
-		SIVAL(buf, 0, key);
+		SIVALu(buf, 0, key);
 		for (ndx = 0, i = 0; i < 4; i++) {
 			ndx += keyp[i];
 			ndx += (ndx << 10);
@@ -142,7 +147,7 @@ void *hashtable_find(struct hashtable *tbl, int64 key, int allocate_if_missing)
 	if (key64)
 		((struct ht_int64_node*)node)->key = key;
 	else
-		node->key = key;
+		node->key = (int32)key;
 	tbl->entries++;
 	return node;
 }

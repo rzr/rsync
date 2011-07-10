@@ -4,7 +4,7 @@
  * Copyright (C) 1996 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
  * Copyright (C) 2001, 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2002-2008 Wayne Davison
+ * Copyright (C) 2002-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,7 +43,6 @@ extern int xfer_dirs;
 extern int filesfrom_fd;
 extern int one_file_system;
 extern int copy_dirlinks;
-extern int keep_dirlinks;
 extern int preserve_uid;
 extern int preserve_gid;
 extern int preserve_acls;
@@ -52,12 +51,10 @@ extern int preserve_links;
 extern int preserve_hard_links;
 extern int preserve_devices;
 extern int preserve_specials;
-extern int uid_ndx;
-extern int gid_ndx;
+extern int delete_during;
 extern int eol_nulls;
 extern int relative_paths;
 extern int implied_dirs;
-extern int file_extra_cnt;
 extern int ignore_perishable;
 extern int non_perishable_cnt;
 extern int prune_empty_dirs;
@@ -66,9 +63,11 @@ extern int copy_unsafe_links;
 extern int protocol_version;
 extern int sanitize_paths;
 extern int munge_symlinks;
+extern int use_safe_inc_flist;
 extern int need_unsorted_flist;
 extern int sender_symlink_iconv;
 extern int unsort_ndx;
+extern uid_t our_uid;
 extern struct stats stats;
 extern char *filesfrom_host;
 
@@ -117,7 +116,7 @@ int flist_eof = 0; /* all the file-lists are now known */
  * will survive just long enough to be used by send_file_entry(). */
 static dev_t tmp_rdev;
 #ifdef SUPPORT_HARD_LINKS
-static int64 tmp_dev, tmp_ino;
+static int64 tmp_dev = -1, tmp_ino;
 #endif
 static char tmp_sum[MAX_DIGEST_LEN];
 
@@ -425,8 +424,7 @@ static void send_file_entry(int f, const char *fname, struct file_struct *file,
 	else
 		mode = file->mode;
 
-	if ((preserve_devices && IS_DEVICE(mode))
-	 || (preserve_specials && IS_SPECIAL(mode))) {
+	if (preserve_devices && IS_DEVICE(mode)) {
 		if (protocol_version < 28) {
 			if (tmp_rdev == rdev)
 				xflags |= XMIT_SAME_RDEV_pre28;
@@ -439,6 +437,17 @@ static void send_file_entry(int f, const char *fname, struct file_struct *file,
 			else
 				rdev_major = major(rdev);
 			if (protocol_version < 30 && (uint32)minor(rdev) <= 0xFFu)
+				xflags |= XMIT_RDEV_MINOR_8_pre30;
+		}
+	} else if (preserve_specials && IS_SPECIAL(mode)) {
+		/* Special files don't need an rdev number, so just make
+		 * the historical transmission of the value efficient. */
+		if (protocol_version < 28)
+			xflags |= XMIT_SAME_RDEV_pre28;
+		else {
+			rdev = MAKEDEV(major(rdev), 0);
+			xflags |= XMIT_SAME_RDEV_MAJOR;
+			if (protocol_version < 30)
 				xflags |= XMIT_RDEV_MINOR_8_pre30;
 		}
 	} else if (protocol_version < 28)
@@ -469,7 +478,7 @@ static void send_file_entry(int f, const char *fname, struct file_struct *file,
 		modtime = file->modtime;
 
 #ifdef SUPPORT_HARD_LINKS
-	if (tmp_dev != 0) {
+	if (tmp_dev != -1) {
 		if (protocol_version >= 30) {
 			struct ht_int64_node *np = idev_find(tmp_dev, tmp_ino);
 			first_hlink_ndx = (int32)(long)np->data - 1;
@@ -587,15 +596,17 @@ static void send_file_entry(int f, const char *fname, struct file_struct *file,
 #endif
 
 #ifdef SUPPORT_HARD_LINKS
-	if (tmp_dev != 0 && protocol_version < 30) {
+	if (tmp_dev != -1 && protocol_version < 30) {
+		/* Older protocols expect the dev number to be transmitted
+		 * 1-incremented so that it is never zero. */
 		if (protocol_version < 26) {
 			/* 32-bit dev_t and ino_t */
-			write_int(f, (int32)dev);
+			write_int(f, (int32)(dev+1));
 			write_int(f, (int32)tmp_ino);
 		} else {
 			/* 64-bit dev_t and ino_t */
 			if (!(xflags & XMIT_SAME_DEV_pre30))
-				write_longint(f, dev);
+				write_longint(f, dev+1);
 			write_longint(f, tmp_ino);
 		}
 	}
@@ -619,8 +630,7 @@ static void send_file_entry(int f, const char *fname, struct file_struct *file,
 		stats.total_size += F_LENGTH(file);
 }
 
-static struct file_struct *recv_file_entry(struct file_list *flist,
-					   int xflags, int f)
+static struct file_struct *recv_file_entry(int f, struct file_list *flist, int xflags)
 {
 	static int64 modtime;
 	static mode_t mode;
@@ -725,8 +735,7 @@ static struct file_struct *recv_file_entry(struct file_list *flist,
 				uid = F_OWNER(first);
 			if (preserve_gid)
 				gid = F_GROUP(first);
-			if ((preserve_devices && IS_DEVICE(mode))
-			 || (preserve_specials && IS_SPECIAL(mode))) {
+			if (preserve_devices && IS_DEVICE(mode)) {
 				uint32 *devp = F_RDEV_P(first);
 				rdev = MAKEDEV(DEV_MAJOR(devp), DEV_MINOR(devp));
 				extra_len += DEV_EXTRA_CNT * EXTRA_LEN;
@@ -801,7 +810,8 @@ static struct file_struct *recv_file_entry(struct file_list *flist,
 				rdev_minor = read_int(f);
 			rdev = MAKEDEV(rdev_major, rdev_minor);
 		}
-		extra_len += DEV_EXTRA_CNT * EXTRA_LEN;
+		if (IS_DEVICE(mode))
+			extra_len += DEV_EXTRA_CNT * EXTRA_LEN;
 		file_length = 0;
 	} else if (protocol_version < 28)
 		rdev = MAKEDEV(0, 0);
@@ -942,8 +952,7 @@ static struct file_struct *recv_file_entry(struct file_list *flist,
 		}
 	}
 
-	if ((preserve_devices && IS_DEVICE(mode))
-	 || (preserve_specials && IS_SPECIAL(mode))) {
+	if (preserve_devices && IS_DEVICE(mode)) {
 		uint32 *devp = F_RDEV_P(file);
 		DEV_MAJOR(devp) = major(rdev);
 		DEV_MINOR(devp) = minor(rdev);
@@ -1041,11 +1050,11 @@ static struct file_struct *recv_file_entry(struct file_list *flist,
 
 #ifdef SUPPORT_ACLS
 	if (preserve_acls && !S_ISLNK(mode))
-		receive_acl(file, f);
+		receive_acl(f, file);
 #endif
 #ifdef SUPPORT_XATTRS
 	if (preserve_xattrs)
-		receive_xattr(file, f );
+		receive_xattr(f, file);
 #endif
 
 	if (S_ISREG(mode) || S_ISLNK(mode))
@@ -1249,18 +1258,19 @@ struct file_struct *make_file(const char *fname, struct file_list *flist,
 		if (protocol_version >= 28
 		 ? (!S_ISDIR(st.st_mode) && st.st_nlink > 1)
 		 : S_ISREG(st.st_mode)) {
-			tmp_dev = (int64)st.st_dev + 1;
+			tmp_dev = (int64)st.st_dev;
 			tmp_ino = (int64)st.st_ino;
 		} else
-			tmp_dev = 0;
+			tmp_dev = -1;
 	}
 #endif
 
 #ifdef HAVE_STRUCT_STAT_ST_RDEV
-	if (IS_DEVICE(st.st_mode) || IS_SPECIAL(st.st_mode)) {
+	if (IS_DEVICE(st.st_mode)) {
 		tmp_rdev = st.st_rdev;
 		st.st_size = 0;
-	}
+	} else if (IS_SPECIAL(st.st_mode))
+		st.st_size = 0;
 #endif
 
 	file->flags = flags;
@@ -1273,10 +1283,12 @@ struct file_struct *make_file(const char *fname, struct file_list *flist,
 	}
 #endif
 	file->mode = st.st_mode;
-	if (uid_ndx) /* Check uid_ndx instead of preserve_uid for del support */
+	if (preserve_uid)
 		F_OWNER(file) = st.st_uid;
-	if (gid_ndx) /* Check gid_ndx instead of preserve_gid for del support */
+	if (preserve_gid)
 		F_GROUP(file) = st.st_gid;
+	if (am_generator && st.st_uid == our_uid)
+		file->flags |= FLAG_OWNED_BY_US;
 
 	if (basename != thisname)
 		file->dirname = lastdir;
@@ -1293,25 +1305,6 @@ struct file_struct *make_file(const char *fname, struct file_list *flist,
 		F_PATHNAME(file) = pathname;
 	else if (!pool)
 		F_DEPTH(file) = extra_len / EXTRA_LEN;
-
-	/* This code is only used by the receiver when it is building
-	 * a list of files for a delete pass. */
-	if (keep_dirlinks && linkname_len && flist) {
-		STRUCT_STAT st2;
-		int save_mode = file->mode;
-		file->mode = S_IFDIR; /* Find a directory with our name. */
-		if (flist_find(dir_flist, file) >= 0
-		 && x_stat(thisname, &st2, NULL) == 0 && S_ISDIR(st2.st_mode)) {
-			file->modtime = st2.st_mtime;
-			file->len32 = 0;
-			file->mode = st2.st_mode;
-			if (uid_ndx)
-				F_OWNER(file) = st2.st_uid;
-			if (gid_ndx)
-				F_GROUP(file) = st2.st_gid;
-		} else
-			file->mode = save_mode;
-	}
 
 	if (basename_len == 0+1) {
 		if (!pool)
@@ -1361,6 +1354,14 @@ static struct file_struct *send_file_name(int f, struct file_list *flist,
 		if (preserve_links && S_ISLNK(file->mode)) {
 			symlink_name = F_SYMLINK(file);
 			symlink_len = strlen(symlink_name);
+			if (symlink_len == 0) {
+				io_error |= IOERR_GENERAL;
+				f_name(file, fbuf);
+				rprintf(FERROR_XFER,
+				    "skipping symlink with 0-length value: %s\n",
+				    full_fname(fbuf));
+				return NULL;
+			}
 		} else {
 			symlink_name = NULL;
 			symlink_len = 0;
@@ -1427,6 +1428,7 @@ static struct file_struct *send_file_name(int f, struct file_list *flist,
 #endif
 #ifdef SUPPORT_XATTRS
 		if (preserve_xattrs) {
+			sx.st.st_mode = file->mode;
 			sx.xattr = NULL;
 			if (get_xattr(fname, &sx) < 0) {
 				io_error |= IOERR_GENERAL;
@@ -1443,13 +1445,13 @@ static struct file_struct *send_file_name(int f, struct file_list *flist,
 
 #ifdef SUPPORT_ACLS
 		if (preserve_acls && !S_ISLNK(file->mode)) {
-			send_acl(&sx, f);
+			send_acl(f, &sx);
 			free_acl(&sx);
 		}
 #endif
 #ifdef SUPPORT_XATTRS
 		if (preserve_xattrs) {
-			F_XATTR(file) = send_xattr(&sx, f);
+			F_XATTR(file) = send_xattr(f, &sx);
 			free_xattr(&sx);
 		}
 #endif
@@ -1476,12 +1478,6 @@ static void send_if_directory(int f, struct file_list *flist,
 		unsigned int len = strlen(fbuf);
 		if (len > 1 && fbuf[len-1] == '/')
 			fbuf[--len] = '\0';
-		if (len >= MAXPATHLEN - 1) {
-			io_error |= IOERR_GENERAL;
-			rprintf(FERROR_XFER, "skipping long-named directory: %s\n",
-				full_fname(fbuf));
-			return;
-		}
 		save_filters = push_local_filters(fbuf, len);
 		send_directory(f, flist, fbuf, len, flags);
 		pop_local_filters(save_filters);
@@ -1597,6 +1593,19 @@ static void add_dirs_to_tree(int parent_ndx, struct file_list *from_flist,
 		DIR_NEXT_SIBLING(dp) = -1;
 }
 
+static void interpret_stat_error(const char *fname, int is_dir)
+{
+	if (errno == ENOENT) {
+		io_error |= IOERR_VANISHED;
+		rprintf(FWARNING, "%s has vanished: %s\n",
+			is_dir ? "directory" : "file", full_fname(fname));
+	} else {
+		io_error |= IOERR_GENERAL;
+		rsyserr(FERROR_XFER, errno, "link_stat %s failed",
+			full_fname(fname));
+	}
+}
+
 /* This function is normally called by the sender, but the receiving side also
  * calls it from get_dirlist() with f set to -1 so that we just construct the
  * file list in memory without sending it over the wire.  Also, get_dirlist()
@@ -1616,27 +1625,40 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 	assert(flist != NULL);
 
 	if (!(d = opendir(fbuf))) {
+		if (errno == ENOENT) {
+			if (am_sender) /* Can abuse this for vanished error w/ENOENT: */
+				interpret_stat_error(fbuf, True);
+			return;
+		}
 		io_error |= IOERR_GENERAL;
 		rsyserr(FERROR_XFER, errno, "opendir %s failed", full_fname(fbuf));
 		return;
 	}
 
 	p = fbuf + len;
-	if (len != 1 || *fbuf != '/')
+	if (len == 1 && *fbuf == '/')
+		remainder = MAXPATHLEN - 1;
+	else if (len < MAXPATHLEN-1) {
 		*p++ = '/';
-	*p = '\0';
-	remainder = MAXPATHLEN - (p - fbuf);
+		*p = '\0';
+		remainder = MAXPATHLEN - (len + 1);
+	} else
+		remainder = 0;
 
 	for (errno = 0, di = readdir(d); di; errno = 0, di = readdir(d)) {
 		char *dname = d_name(di);
 		if (dname[0] == '.' && (dname[1] == '\0'
 		    || (dname[1] == '.' && dname[2] == '\0')))
 			continue;
-		if (strlcpy(p, dname, remainder) >= remainder) {
+		unsigned name_len = strlcpy(p, dname, remainder);
+		if (name_len >= remainder) {
+			char save = fbuf[len];
+			fbuf[len] = '\0';
 			io_error |= IOERR_GENERAL;
 			rprintf(FERROR_XFER,
-				"cannot send long-named file %s\n",
-				full_fname(fbuf));
+				"filename overflows max-path len by %u: %s/%s\n",
+				name_len - remainder + 1, fbuf, dname);
+			fbuf[len] = save;
 			continue;
 		}
 		if (dname[0] == '\0') {
@@ -1768,6 +1790,15 @@ done:
 	filter_list = save_filter_list;
 }
 
+static NORETURN void fatal_unsafe_io_error(void)
+{
+	/* This (sadly) can only happen when pushing data because
+	 * the sender does not know about what kind of delete
+	 * is in effect on the receiving side when pulling. */
+	rprintf(FERROR_XFER, "FATAL I/O ERROR: dying to avoid a --delete-during issue with a pre-3.0.7 receiver.\n");
+	exit_cleanup(RERR_UNSUPPORTED);
+}
+
 static void send1extra(int f, struct file_struct *file, struct file_list *flist)
 {
 	char fbuf[MAXPATHLEN];
@@ -1787,9 +1818,7 @@ static void send1extra(int f, struct file_struct *file, struct file_list *flist)
 		if (one_file_system) {
 			STRUCT_STAT st;
 			if (link_stat(fbuf, &st, copy_dirlinks) != 0) {
-				io_error |= IOERR_GENERAL;
-				rsyserr(FERROR_XFER, errno, "link_stat %s failed",
-					full_fname(fbuf));
+				interpret_stat_error(fbuf, True);
 				return;
 			}
 			filesystem_dev = st.st_dev;
@@ -1824,9 +1853,7 @@ static void send1extra(int f, struct file_struct *file, struct file_list *flist)
 		if (name_type != NORMAL_NAME) {
 			STRUCT_STAT st;
 			if (link_stat(fbuf, &st, 1) != 0) {
-				io_error |= IOERR_GENERAL;
-				rsyserr(FERROR_XFER, errno, "link_stat %s failed",
-					full_fname(fbuf));
+				interpret_stat_error(fbuf, True);
 				continue;
 			}
 			send_file_name(f, flist, fbuf, &st, FLAG_TOP_DIR | flags, ALL_FILTERS);
@@ -1887,7 +1914,16 @@ void send_extra_file_list(int f, int at_least)
 			dp = F_DIR_NODE_P(file);
 		}
 
-		write_byte(f, 0);
+		if (io_error == save_io_error || ignore_errors)
+			write_byte(f, 0);
+		else if (use_safe_inc_flist) {
+			write_shortint(f, XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST);
+			write_varint(f, io_error);
+		} else {
+			if (delete_during)
+				fatal_unsafe_io_error();
+			write_byte(f, 0);
+		}
 
 		if (need_unsorted_flist) {
 			if (!(flist->sorted = new_array(struct file_struct *, flist->used)))
@@ -1962,9 +1998,6 @@ struct file_list *send_file_list(int f, int argc, char *argv[])
 	start_write = stats.total_written;
 	gettimeofday(&start_tv, NULL);
 
-	if (!orig_dir)
-		orig_dir = strdup(curr_dir);
-
 	if (relative_paths && protocol_version >= 30)
 		implied_dirs = 1; /* We send flagged implied dirs */
 
@@ -1989,6 +2022,9 @@ struct file_list *send_file_list(int f, int argc, char *argv[])
 		}
 		use_ff_fd = 1;
 	}
+
+	if (!orig_dir)
+		orig_dir = strdup(curr_dir);
 
 	while (1) {
 		char fbuf[MAXPATHLEN], *fn, name_type;
@@ -2184,7 +2220,17 @@ struct file_list *send_file_list(int f, int argc, char *argv[])
 		stats.flist_buildtime = 1;
 	start_tv = end_tv;
 
-	write_byte(f, 0); /* Indicate end of file list */
+	/* Indicate end of file list */
+	if (io_error == 0 || ignore_errors)
+		write_byte(f, 0);
+	else if (use_safe_inc_flist) {
+		write_shortint(f, XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST);
+		write_varint(f, io_error);
+	} else {
+		if (delete_during && inc_recurse)
+			fatal_unsafe_io_error();
+		write_byte(f, 0);
+	}
 
 #ifdef SUPPORT_HARD_LINKS
 	if (preserve_hard_links && protocol_version >= 30 && !inc_recurse)
@@ -2219,10 +2265,12 @@ struct file_list *send_file_list(int f, int argc, char *argv[])
 	if (numeric_ids <= 0 && !inc_recurse)
 		send_id_list(f);
 
+	set_msg_fd_in(-1);
+
 	/* send the io_error flag */
 	if (protocol_version < 30)
 		write_int(f, ignore_errors ? 0 : io_error);
-	else if (io_error && !ignore_errors)
+	else if (!use_safe_inc_flist && io_error && !ignore_errors)
 		send_msg_int(MSG_IO_ERROR, io_error);
 
 	if (disable_buffering)
@@ -2263,6 +2311,7 @@ struct file_list *recv_file_list(int f)
 	struct file_list *flist;
 	int dstart, flags;
 	int64 start_read;
+	int save_verbose = verbose;
 
 	if (!first_flist)
 		rprintf(FLOG, "receiving file list\n");
@@ -2289,14 +2338,28 @@ struct file_list *recv_file_list(int f)
 		dstart = 0;
 	}
 
+	if (am_server && verbose > 2)
+		verbose = 2;
 	while ((flags = read_byte(f)) != 0) {
 		struct file_struct *file;
 
-		flist_expand(flist, 1);
-
 		if (protocol_version >= 28 && (flags & XMIT_EXTENDED_FLAGS))
 			flags |= read_byte(f) << 8;
-		file = recv_file_entry(flist, flags, f);
+
+		if (flags == (XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST)) {
+			int err;
+			if (!use_safe_inc_flist) {
+				rprintf(FERROR, "Invalid flist flag: %x\n", flags);
+				exit_cleanup(RERR_PROTOCOL);
+			}
+			err = read_varint(f);
+			if (!ignore_errors)
+				io_error |= err;
+			break;
+		}
+
+		flist_expand(flist, 1);
+		file = recv_file_entry(f, flist, flags);
 
 		if (inc_recurse && S_ISDIR(file->mode)) {
 			flist_expand(dir_flist, 1);
@@ -2313,6 +2376,7 @@ struct file_list *recv_file_list(int f)
 		}
 	}
 	file_total += flist->used;
+	verbose = save_verbose;
 
 	if (verbose > 2)
 		rprintf(FINFO, "received %d names\n", flist->used);
@@ -2457,6 +2521,28 @@ int flist_find(struct file_list *flist, struct file_struct *f)
 			high = mid - 1;
 	}
 	return -1;
+}
+
+/* Search for an identically-named item in the file list.  Differs from
+ * flist_find in that an item that agrees with "f" in directory-ness is
+ * preferred but one that does not is still found. */
+int flist_find_ignore_dirness(struct file_list *flist, struct file_struct *f)
+{
+	mode_t save_mode;
+	int ndx;
+
+	/* First look for an item that agrees in directory-ness. */
+	ndx = flist_find(flist, f);
+	if (ndx >= 0)
+		return ndx;
+
+	/* Temporarily flip f->mode to look for an item of opposite
+	 * directory-ness. */
+	save_mode = f->mode;
+	f->mode = S_ISDIR(f->mode) ? S_IFREG : S_IFDIR;
+	ndx = flist_find(flist, f);
+	f->mode = save_mode;
+	return ndx;
 }
 
 /*
@@ -2957,13 +3043,14 @@ char *f_name(const struct file_struct *f, char *fbuf)
  * of the dirname string, and also indicates that "dirname" is a MAXPATHLEN
  * buffer (the functions we call will append names onto the end, but the old
  * dir value will be restored on exit). */
-struct file_list *get_dirlist(char *dirname, int dlen, int ignore_filter_rules)
+struct file_list *get_dirlist(char *dirname, int dlen, int flags)
 {
 	struct file_list *dirlist;
 	char dirbuf[MAXPATHLEN];
 	int save_recurse = recurse;
 	int save_xfer_dirs = xfer_dirs;
 	int save_prune_empty_dirs = prune_empty_dirs;
+	int senddir_fd = flags & GDL_IGNORE_FILTER_RULES ? -2 : -1;
 
 	if (dlen < 0) {
 		dlen = strlcpy(dirbuf, dirname, MAXPATHLEN);
@@ -2976,7 +3063,7 @@ struct file_list *get_dirlist(char *dirname, int dlen, int ignore_filter_rules)
 
 	recurse = 0;
 	xfer_dirs = 1;
-	send_directory(ignore_filter_rules ? -2 : -1, dirlist, dirname, dlen, 0);
+	send_directory(senddir_fd, dirlist, dirname, dlen, FLAG_CONTENT_DIR);
 	xfer_dirs = save_xfer_dirs;
 	recurse = save_recurse;
 	if (do_progress)

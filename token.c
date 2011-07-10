@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1996 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
- * Copyright (C) 2003-2008 Wayne Davison
+ * Copyright (C) 2003-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -45,12 +45,12 @@ static void add_suffix(struct suffix_tree **prior, char ltr, const char *str)
 
 	if (ltr == '[') {
 		const char *after = strchr(str, ']');
-		/* Just skip bogus character classes. */
-		if (!after++)
+		/* Treat "[foo" and "[]" as having a literal '['. */
+		if (after && after++ != str+1) {
+			while ((ltr = *str++) != ']')
+				add_suffix(prior, ltr, after);
 			return;
-		while ((ltr = *str++) != ']')
-			add_suffix(prior, ltr, after);
-		return;
+		}
 	}
 
 	for (node = *prior; node; prior = &node->sibling, node = node->sibling) {
@@ -100,7 +100,6 @@ static void add_nocompress_suffixes(const char *str)
 		} while (*++f != '/' && *f);
 		*t++ = '\0';
 
-		fprintf(stderr, "adding `%s'\n", buf);
 		add_suffix(&suftree, *buf, buf+1);
 	}
 
@@ -193,6 +192,8 @@ void set_compression(const char *fname)
 		return;
 
 	while (1) {
+		if (isUpper(&ltr))
+			ltr = toLower(&ltr);
 		while (node->letter != ltr) {
 			if (node->letter > ltr)
 				return;
@@ -599,7 +600,7 @@ static void see_deflate_token(char *buf, int32 len)
 		rx_strm.next_out = (Bytef *)dbuf;
 		rx_strm.avail_out = AVAIL_OUT_SIZE(CHUNK_SIZE);
 		r = inflate(&rx_strm, Z_SYNC_FLUSH);
-		if (r != Z_OK) {
+		if (r != Z_OK && r != Z_BUF_ERROR) {
 			rprintf(FERROR, "inflate (token) returned %d\n", r);
 			exit_cleanup(RERR_STREAMIO);
 		}

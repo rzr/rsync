@@ -4,7 +4,7 @@
  * Copyright (C) 1996-2001 Andrew Tridgell <tridge@samba.org>
  * Copyright (C) 1996 Paul Mackerras
  * Copyright (C) 2002 Martin Pool
- * Copyright (C) 2003-2008 Wayne Davison
+ * Copyright (C) 2003-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,7 +37,7 @@ extern int sanitize_paths;
 extern int protocol_version;
 extern int module_id;
 
-extern char curr_dir[];
+extern char curr_dir[MAXPATHLEN];
 extern unsigned int curr_dir_len;
 extern unsigned int module_dirlen;
 
@@ -924,7 +924,7 @@ static char default_cvsignore[] =
 	" *.a *.olb *.o *.obj *.so *.exe"
 	" *.Z *.elc *.ln core"
 	/* The rest we added to suit ourself. */
-	" .svn/ .git/ .bzr/";
+	" .svn/ .git/ .hg/ .bzr/";
 
 static void get_cvs_excludes(uint32 mflags)
 {
@@ -1121,6 +1121,8 @@ char *get_rule_prefix(int match_flags, const char *pat, int for_xfer,
 	else
 		legal_len = 0;
 
+	if (match_flags & MATCHFLG_ABS_PATH)
+		*op++ = '/';
 	if (match_flags & MATCHFLG_NEGATE)
 		*op++ = '!';
 	if (match_flags & MATCHFLG_CVS_IGNORE)
