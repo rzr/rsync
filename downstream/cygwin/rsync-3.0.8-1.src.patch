@@ -1,0 +1,11 @@
+--- origsrc/rsync-3.0.8/configure.ac	2011-03-26 22:34:18.000000000 +0100
++++ src/rsync-3.0.8/configure.ac	2011-03-31 15:07:34.888956100 +0200
+@@ -962,7 +962,7 @@ if test x"$enable_xattr_support" = x"no"
+     AC_MSG_RESULT(no)
+ else
+     case "$host_os" in
+-    *linux*)
++    *linux* | *cygwin*)
+ 	AC_MSG_RESULT(Using Linux xattrs)
+ 	AC_DEFINE(HAVE_LINUX_XATTRS, 1, [True if you have Linux xattrs])
+ 	AC_DEFINE(SUPPORT_XATTRS, 1)
