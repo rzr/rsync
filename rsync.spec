@@ -8,12 +8,13 @@
 Name:       rsync
 Summary:    A program for synchronizing files over a network
 Version:    3.0.8
-Release:    1.8
+Release:    0
 Group:      Applications/Internet
 License:    GPLv3+
 URL:        http://rsync.samba.org/
-Source0:    http://rsync.samba.org/ftp/rsync/src/rsync-%{version}.tar.gz
-Source1:    rsync.service
+#Source0:    http://rsync.samba.org/ftp/rsync/src/rsync-%{version}.tar.gz
+Source0:    rsync_%{version}.orig.tar.gz
+Source1:    rsync.xinetd
 Source100:  rsync.yaml
 BuildRequires:  pkgconfig(popt)
 BuildRequires:  libacl-devel
