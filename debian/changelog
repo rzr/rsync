@@ -1,3 +1,10 @@
+rsync (3.0.8-1maemo0~rzr5) harmattan; urgency=low
+
+  * changed format to "3.0 (quilt)"
+  * wip: http://rzr.online.fr/q/handset
+
+ -- Philippe Coval <rzr@gna.org>  Sat, 09 Jul 2011 22:03:12 +0200
+
 rsync (3.0.8-1) unstable; urgency=low
 
   * new upstream release.
@@ -1000,5 +1007,3 @@ rsync (1.6.2-1) unstable; urgency=low
   * Initial Release
 
  -- Philip Hands <phil@hands.com>  Wed, 9 Oct 1996 23:45:08 +0100
-
-

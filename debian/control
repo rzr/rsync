@@ -1,13 +1,16 @@
 Source: rsync
-Section: net
+Section: user/network
 Priority: optional
-Maintainer: Paul Slootman <paul@debian.org>
-Build-Depends: libpopt-dev,libacl1-dev,libattr1-dev
+Maintainer: Philippe Coval <rzr@gna.org>
+XSBC-Original-Maintainer: Paul Slootman <paul@debian.org>
+Build-Depends: libpopt-dev,libacl1-dev,libattr1-dev, quilt
 Standards-Version: 3.9.1.0
+Homepage: http://rsync.samba.org/
 
 Package: rsync
 Architecture: any
-Depends: ${shlibs:Depends}, lsb-base (>= 3.2-14), base-files (>= 4.0.1)
+Depends: ${shlibs:Depends}, lsb-base (>= 3.2-14), 
+ base-files
 Suggests: openssh-client, openssh-server
 Description: fast remote file copy program (like rcp)
  rsync is a program that allows files to be copied to and from remote
