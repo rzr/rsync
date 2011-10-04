@@ -44,32 +44,30 @@ DEB_HOST_GNU_TYPE=$(DEB_BUILD_GNU_TYPE)
 DEB_BUILD_GNU_TYPE := $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 DEB_HOST_GNU_TYPE := $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
 
+# keep lintian happy:
+build: build-arch build-indep
+build-arch: build-stamp
+build-indep: build-stamp
 
-build:
-	echo building build tree
+build-stamp:
+	@echo building build tree
 	-rm -rf debian/buildtree
 	mkdir debian/buildtree
 	cp -p * debian/buildtree || true
 	cp -r lib popt support testsuite zlib debian/buildtree
-	@echo applying acl support patch
-	cat patches/acls.diff | (cd debian/buildtree; patch -p1)
 	@echo applying misc Debian patches
 	for i in debian/patches/*.patch debian/patches/*.diff; do if [ -s $$i ]; then echo "  $$i ..."; cat $$i | (cd debian/buildtree; patch -p1) || exit 1; fi; done
-	echo configuring
+	@echo configuring
 	(cd debian/buildtree; ./configure --prefix=/usr --mandir='$${prefix}/share/man' --build=$(DEB_BUILD_GNU_TYPE) --host=$(DEB_HOST_GNU_TYPE))
-	# --enable-acl-support
-	echo building
+	@echo building
 	$(MAKE) --directory=debian/buildtree CFLAGS="$(CFLAGS)" all
-	touch build
-	echo done
+	touch build-stamp
+	@echo done
 
 clean: checkdir
-	-rm -f build
-	# -$(MAKE) -i distclean || $(MAKE) -f Makefile.in distclean
+	-rm -f build-stamp
 	-rm -rf debian/buildtree
 	-rm -rf *~ debian/tmp debian/*~ debian/*.bak debian/files* debian/substvars
-	# -rm -f lib/dummy zlib/dummy
-	# rm -f config.cache config.log acconfig.h
 
 binary-indep:	checkroot build
 # nothing to do
@@ -84,6 +82,7 @@ binary-arch:	checkroot build
 			debian/tmp/usr/share/man/man1 \
 			debian/tmp/usr/share/man/man5 \
 			debian/tmp/usr/share/lintian/overrides \
+			debian/tmp/lib/systemd/system \
 			debian/tmp/etc \
 			debian/tmp/etc/default \
 			debian/tmp/etc/init.d
@@ -109,11 +108,12 @@ endif
 	$(INSTALL_SCRIPT) debian/postinst debian/tmp/DEBIAN/
 	$(INSTALL_SCRIPT) debian/prerm    debian/tmp/DEBIAN/
 	$(INSTALL_SCRIPT) debian/postrm   debian/tmp/DEBIAN/
+	$(INSTALL_FILE) debian/rsync.service debian/tmp/lib/systemd/system/
 	$(INSTALL_FILE) debian/default  debian/tmp/etc/default/rsync
 	$(INSTALL_SCRIPT) debian/init.d debian/tmp/etc/init.d/rsync
 	$(INSTALL_FILE) debian/lintian.overrides  debian/tmp/usr/share/lintian/overrides/rsync
 	(cd debian/tmp; find ./etc -type f | sed s,.,,) > debian/tmp/DEBIAN/conffiles
-	(cd debian/tmp; find usr -type f -print0 | xargs -0 md5sum) > debian/tmp/DEBIAN/md5sums
+	(cd debian/tmp; find lib usr -type f -print0 | xargs -0 md5sum) > debian/tmp/DEBIAN/md5sums
 	dpkg-shlibdeps debian/tmp/usr/bin/$(BINS)
 	dpkg-gencontrol -isp
 	chown -R root.root debian/tmp
@@ -130,4 +130,4 @@ checkdir:
 checkroot: checkdir
 	@test 0 = `id -u` || { echo "Error: not super-user"; exit 1; }
 
-.PHONY: binary binary-arch binary-indep clean checkroot checkdir
+.PHONY: binary binary-arch binary-indep clean checkroot checkdir build build-arch build-indep

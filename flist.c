@@ -1646,11 +1646,12 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 		remainder = 0;
 
 	for (errno = 0, di = readdir(d); di; errno = 0, di = readdir(d)) {
+		unsigned name_len;
 		char *dname = d_name(di);
 		if (dname[0] == '.' && (dname[1] == '\0'
 		    || (dname[1] == '.' && dname[2] == '\0')))
 			continue;
-		unsigned name_len = strlcpy(p, dname, remainder);
+		name_len = strlcpy(p, dname, remainder);
 		if (name_len >= remainder) {
 			char save = fbuf[len];
 			fbuf[len] = '\0';
@@ -2101,12 +2102,8 @@ struct file_list *send_file_list(int f, int argc, char *argv[])
 				fn = fbuf;
 			/* A leading ./ can be used in relative mode to affect
 			 * the dest dir without its name being in the path. */
-			if (*fn == '.' && fn[1] == '/' && !implied_dot_dir) {
-				send_file_name(f, flist, ".", NULL,
-				    (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR,
-				    ALL_FILTERS);
-				implied_dot_dir = 1;
-			}
+			if (*fn == '.' && fn[1] == '/' && fn[2] && !implied_dot_dir)
+				implied_dot_dir = -1;
 			len = clean_fname(fn, CFN_KEEP_TRAILING_SLASH
 					    | CFN_DROP_TRAILING_DOT_DIR);
 			if (len == 1) {
@@ -2144,11 +2141,20 @@ struct file_list *send_file_list(int f, int argc, char *argv[])
 		dirlen = dir ? strlen(dir) : 0;
 		if (dirlen != lastdir_len || memcmp(lastdir, dir, dirlen) != 0) {
 			if (!change_pathname(NULL, dir, -dirlen))
-				continue;
+				goto bad_path;
 			lastdir = pathname;
 			lastdir_len = pathname_len;
-		} else if (!change_pathname(NULL, lastdir, lastdir_len))
+		} else if (!change_pathname(NULL, lastdir, lastdir_len)) {
+		    bad_path:
+			if (implied_dot_dir < 0)
+				implied_dot_dir = 0;
 			continue;
+		}
+
+		if (implied_dot_dir < 0) {
+			implied_dot_dir = 1;
+			send_file_name(f, flist, ".", NULL, (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR, ALL_FILTERS);
+		}
 
 		if (fn != fbuf)
 			memmove(fbuf, fn, len + 1);

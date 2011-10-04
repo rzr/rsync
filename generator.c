@@ -630,7 +630,7 @@ int unchanged_attrs(const char *fname, struct file_struct *file, stat_x *sxp)
 		if (perms_differ(file, sxp))
 			return 0;
 #endif
-#ifndef CAN_CHOWN_SYMLINK
+#ifdef CAN_CHOWN_SYMLINK
 		if (ownership_differs(file, sxp))
 			return 0;
 #endif
@@ -1355,7 +1355,7 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 				handle_skipped_hlink(file, itemizing, code, f_out);
 #endif
 			rprintf(FERROR_XFER,
-				"skipping daemon-excluded %s \"%s\"\n",
+				"ERROR: daemon refused to receive %s \"%s\"\n",
 				is_dir ? "directory" : "file", fname);
 			if (is_dir)
 				goto skipping_dir_contents;
@@ -1523,12 +1523,21 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 			}
 		}
 
-		/* We need to ensure that the dirs in the transfer have writable
-		 * permissions during the time we are putting files within them.
-		 * This is then fixed after the transfer is done. */
+#ifdef SUPPORT_XATTRS
+		if (preserve_xattrs && statret == 1)
+			copy_xattrs(fnamecmpbuf, fname);
+#endif
+		if (set_file_attrs(fname, file, real_ret ? NULL : &real_sx, NULL, 0)
+		    && verbose && code != FNONE && f_out != -1)
+			rprintf(code, "%s/\n", fname);
+
+		/* We need to ensure that the dirs in the transfer have both
+		 * readable and writable permissions during the time we are
+		 * putting files within them.  This is then restored to the
+		 * former permissions after the transfer is done. */
 #ifdef HAVE_CHMOD
-		if (!am_root && !(file->mode & S_IWUSR) && dir_tweaking) {
-			mode_t mode = file->mode | S_IWUSR;
+		if (!am_root && (file->mode & S_IRWXU) != S_IRWXU && dir_tweaking) {
+			mode_t mode = file->mode | S_IRWXU;
 			if (do_chmod(fname, mode) < 0) {
 				rsyserr(FERROR_XFER, errno,
 					"failed to modify permissions on %s",
@@ -1537,14 +1546,6 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 			need_retouch_dir_perms = 1;
 		}
 #endif
-
-#ifdef SUPPORT_XATTRS
-		if (preserve_xattrs && statret == 1)
-			copy_xattrs(fnamecmpbuf, fname);
-#endif
-		if (set_file_attrs(fname, file, real_ret ? NULL : &real_sx, NULL, 0)
-		    && verbose && code != FNONE && f_out != -1)
-			rprintf(code, "%s/\n", fname);
 
 		if (real_ret != 0 && one_file_system)
 			real_sx.st.st_dev = filesystem_dev;
@@ -2142,10 +2143,16 @@ void check_for_finished_files(int itemizing, enum logcode code, int check_redo)
 	while (1) {
 #ifdef SUPPORT_HARD_LINKS
 		if (preserve_hard_links && (ndx = get_hlink_num()) != -1) {
+			int send_failed = (ndx == -2);
+			if (send_failed)
+				ndx = get_hlink_num();
 			flist = flist_for_ndx(ndx, "check_for_finished_files.1");
 			file = flist->files[ndx - flist->ndx_start];
 			assert(file->flags & FLAG_HLINKED);
-			finish_hard_link(file, f_name(file, fbuf), ndx, NULL, itemizing, code, -1);
+			if (send_failed)
+				handle_skipped_hlink(file, itemizing, code, sock_f_out);
+			else
+				finish_hard_link(file, f_name(file, fbuf), ndx, NULL, itemizing, code, -1);
 			flist->in_progress--;
 			continue;
 		}
