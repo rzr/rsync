@@ -5,7 +5,7 @@ AC_CONFIG_SRCDIR([byteorder.h])
 AC_CONFIG_HEADER(config.h)
 AC_PREREQ(2.59)
 
-RSYNC_VERSION=3.0.8
+RSYNC_VERSION=3.0.9
 AC_SUBST(RSYNC_VERSION)
 AC_MSG_NOTICE([Configuring rsync $RSYNC_VERSION])
 
@@ -331,7 +331,7 @@ AC_CHECK_HEADERS(sys/fcntl.h sys/select.h fcntl.h sys/time.h sys/unistd.h \
     sys/un.h sys/attr.h mcheck.h arpa/inet.h arpa/nameser.h locale.h \
     netdb.h malloc.h float.h limits.h iconv.h libcharset.h langinfo.h \
     sys/acl.h acl/libacl.h attr/xattr.h sys/xattr.h sys/extattr.h \
-    popt.h popt/popt.h)
+    popt.h popt/popt.h netinet/in_systm.h netinet/ip.h)
 AC_HEADER_MAJOR
 
 AC_CACHE_CHECK([if makedev takes 3 args],rsync_cv_MAKEDEV_TAKES_3_ARGS,[
@@ -675,7 +675,11 @@ AC_TRY_RUN([
 
 main() {
        int fd[2];
+#ifdef __CYGWIN__
+       exit(1);
+#else
        exit((socketpair(AF_UNIX, SOCK_STREAM, 0, fd) != -1) ? 0 : 1);
+#endif
 }],
 rsync_cv_HAVE_SOCKETPAIR=yes,rsync_cv_HAVE_SOCKETPAIR=no,rsync_cv_HAVE_SOCKETPAIR=cross)])
 if test x"$rsync_cv_HAVE_SOCKETPAIR" = x"yes"; then
@@ -966,7 +970,6 @@ else
 	AC_MSG_RESULT(Using Linux xattrs)
 	AC_DEFINE(HAVE_LINUX_XATTRS, 1, [True if you have Linux xattrs])
 	AC_DEFINE(SUPPORT_XATTRS, 1)
-	AC_DEFINE(NO_SYMLINK_XATTRS, 1, [True if symlinks do not support xattrs])
 	;;
     darwin*)
 	AC_MSG_RESULT(Using OS X xattrs)
@@ -979,6 +982,10 @@ else
 	AC_MSG_RESULT(Using FreeBSD extattrs)
 	AC_DEFINE(HAVE_FREEBSD_XATTRS, 1, [True if you have FreeBSD xattrs])
 	AC_DEFINE(SUPPORT_XATTRS, 1)
+	;;
+    solaris*)
+	# Better Solaris support coming in 3.1.0...
+	AC_DEFINE(NO_SYMLINK_XATTRS, 1, [True if symlinks do not support xattrs])
 	;;
     *)
 	if test x"$enable_xattr_support" = x"yes"; then

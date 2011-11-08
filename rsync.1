@@ -1,6 +1,6 @@
-.TH "rsync" "1" "26 Mar 2011" "" ""
+.TH "rsync" "1" "23 Sep 2011" "" ""
 .SH "NAME"
-rsync \(em a fast, versatile, remote (and local) file\-copying tool
+rsync \- a fast, versatile, remote (and local) file\-copying tool
 .SH "SYNOPSIS"
 
 .PP 
@@ -346,6 +346,20 @@ daemon (including stand\-alone and inetd configurations).
 If you\(cq\&re using one of the remote\-shell transports for the transfer, there is
 no need to manually start an rsync daemon.
 .PP 
+.SH "SORTED TRANSFER ORDER"
+
+.PP 
+Rsync always sorts the specified filenames into its internal transfer list.
+This handles the merging together of the contents of identically named
+directories, makes it easy to remove duplicate filenames, and may confuse
+someone when the files are transferred in a different order than what was
+given on the command\-line.
+.PP 
+If you need a particular file to be transferred prior to another, either
+separate the files into different rsync calls, or consider using
+\fB\-\-delay\-updates\fP (which doesn\(cq\&t affect the sorted transfer order, but
+does make the final file\-updating phase happen much more rapidly).
+.PP 
 .SH "EXAMPLES"
 
 .PP 
@@ -442,10 +456,10 @@ to the detailed description below for a complete description.
      \-\-remove\-source\-files   sender removes synchronized files (non\-dir)
      \-\-del                   an alias for \-\-delete\-during
      \-\-delete                delete extraneous files from dest dirs
-     \-\-delete\-before         receiver deletes before transfer (default)
-     \-\-delete\-during         receiver deletes during xfer, not before
+     \-\-delete\-before         receiver deletes before xfer, not during
+     \-\-delete\-during         receiver deletes during the transfer
      \-\-delete\-delay          find deletions during, delete after
-     \-\-delete\-after          receiver deletes after transfer, not before
+     \-\-delete\-after          receiver deletes after transfer, not during
      \-\-delete\-excluded       also delete excluded files from dest dirs
      \-\-ignore\-errors         delete even if there are I/O errors
      \-\-force                 force deletion of dirs even if not empty
@@ -533,11 +547,17 @@ accepted:
 .SH "OPTIONS"
 
 .PP 
-rsync uses the GNU long options package. Many of the command line
-options have two variants, one short and one long.  These are shown
-below, separated by commas. Some options only have a long variant.
-The \(cq\&=\(cq\& for options that take a parameter is optional; whitespace
-can be used instead.
+Rsync accepts both long (double\-dash + word) and short (single\-dash + letter)
+options.  The full list of the available options are described below.  If an
+option can be specified in more than one way, the choices are comma\-separated.
+Some options only have a long variant, not a short.  If the option takes a
+parameter, the parameter is only listed after the long variant, even though it
+must also be specified for the short.  When specifying a parameter, you can
+either use the form \-\-option=param or replace the \(cq\&=\(cq\& with whitespace.  The
+parameter may need to be quoted in some manner for it to survive the shell\(cq\&s
+command\-line parsing.  Keep in mind that a leading tilde (~) in a filename is
+substituted by your shell, so \-\-option=~/foo will not change the tilde into
+your home directory (remove the \(cq\&=\(cq\& for that).
 .PP 
 .IP "\fB\-\-help\fP"
 Print a short help page describing the options
@@ -1144,7 +1164,7 @@ used by \fB\-\-fake\-super\fP) unless you repeat the option (e.g. \-XX).  This
 .IP 
 .IP "\fB\-\-chmod\fP"
 This option tells rsync to apply one or more
-comma\-separated \(dq\&chmod\(dq\& strings to the permission of the files in the
+comma\-separated \(dq\&chmod\(dq\& modes to the permission of the files in the
 transfer.  The resulting value is treated as though it were the permissions
 that the sending side supplied for the file, which means that this option
 can seem to have no effect on existing files if \fB\-\-perms\fP is not enabled.
@@ -1348,6 +1368,16 @@ is only looking at the existing files in the destination hierarchy itself.
 This tells rsync to remove from the sending
 side the files (meaning non\-directories) that are a part of the transfer
 and have been successfully duplicated on the receiving side.
+.IP 
+Note that you should only use this option on source files that are quiescent.
+If you are using this to move files that show up in a particular directory over
+to another host, make sure that the finished files get renamed into the source
+directory, not directly written into it, so that rsync can\(cq\&t possibly transfer
+a file that is not yet fully written.  If you can\(cq\&t first write the files into
+a different directory, you should use a naming idiom that lets rsync avoid
+transferring files that are not yet finished (e.g. name the file \(dq\&foo.new\(dq\& when
+it is written, rename it to \(dq\&foo\(dq\& when it is done, and then use the option
+\fB\-\-exclude='\&*.new'\&\fP for the rsync transfer).
 .IP 
 .IP "\fB\-\-delete\fP"
 This tells rsync to delete extraneous files from the
@@ -3501,7 +3531,7 @@ http://rsync.samba.org/
 .SH "VERSION"
 
 .PP 
-This man page is current for version 3.0.8 of rsync.
+This man page is current for version 3.0.9 of rsync.
 .PP 
 .SH "INTERNAL OPTIONS"
 

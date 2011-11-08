@@ -369,7 +369,7 @@ void usage(enum logcode F)
   rprintf(F,"     --del                   an alias for --delete-during\n");
   rprintf(F,"     --delete                delete extraneous files from destination dirs\n");
   rprintf(F,"     --delete-before         receiver deletes before transfer, not during\n");
-  rprintf(F,"     --delete-during         receiver deletes during transfer (default)\n");
+  rprintf(F,"     --delete-during         receiver deletes during the transfer\n");
   rprintf(F,"     --delete-delay          find deletions during, delete after\n");
   rprintf(F,"     --delete-after          receiver deletes after transfer, not during\n");
   rprintf(F,"     --delete-excluded       also delete excluded files from destination dirs\n");
@@ -433,7 +433,7 @@ void usage(enum logcode F)
   rprintf(F," -4, --ipv4                  prefer IPv4\n");
   rprintf(F," -6, --ipv6                  prefer IPv6\n");
   rprintf(F,"     --version               print version number\n");
-  rprintf(F,"(-h) --help                  show this help (-h works with no other options)\n");
+  rprintf(F,"(-h) --help                  show this help (-h is --help only if used alone)\n");
 
   rprintf(F,"\n");
   rprintf(F,"Use \"rsync --daemon --help\" to see the daemon-mode command-line options.\n");
