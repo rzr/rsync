@@ -1,22 +1,26 @@
 Source: rsync
 Section: net
 Priority: optional
-XSBC-Original-Maintainer: Paul Slootman <paul@debian.org>
-Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Maintainer: Philippe Coval <rzr@gna.org>
+X-Original-Maintainer: Paul Slootman <paul@debian.org>
 Build-Depends: libpopt-dev,libacl1-dev,libattr1-dev
-Standards-Version: 3.9.1.0
+Standards-Version: 3.9.2.0
+Homepage: http://rsync.samba.org/
 
 Package: rsync
 Architecture: any
-Depends: ${shlibs:Depends}, lsb-base (>= 3.2-14), base-files (>= 4.0.1)
+X-Original-Depends: ${shlibs:Depends}, lsb-base (>= 3.2-14), base-files (>= 4.0.1)
+Depends: ${shlibs:Depends}, lsb-base, base-files
+Conflicts: duplicity (<< 0.6.11)
 Suggests: openssh-client, openssh-server
-Description: fast remote file copy program (like rcp)
- rsync is a program that allows files to be copied to and from remote
- machines in much the same way as rcp.  It has many more options than
- rcp, and uses the rsync remote-update protocol to greatly speed up
- file transfers when the destination file already exists.
+Description: fast, versatile, remote (and local) file-copying tool
+ rsync is a fast and versatile file-copying tool which can copy locally
+ and to/from a remote host. It offers many options to control its behaviour,
+ and its remote-update protocol can minimize network traffic to make
+ transferring updates between machines fast and efficient.
  .
- The rsync remote-update protocol allows rsync to transfer just the
- differences between two sets of files across the network link.
+ It is widely used for backups and mirroring and as an improved copy
+ command for everyday use.
  .
- This package also includes rsyncd daemon functionality.
+ This package provides both the rsync command line tool and optional
+ daemon functionality.

@@ -1,12 +1,52 @@
-rsync (3.0.8-1ubuntu1) oneiric; urgency=low
+rsync (3.0.9-1.0~rzr1) lucid; urgency=low
 
-  * Merge from debian unstable. Remaining changes:
-    - debian/patches/delete-delay.diff: correct error message when using
-      --delete-delay (LP: #516241), patch originally from Jonas Pedersen
-  * Drop debian/patches/security-CVE-2011-1097.diff which is now included
-    upstream
+  * Non-maintainer upload.
+  * http://rzr.online.fr/q/harmattan
 
- -- Jamie Strandboge <jamie@ubuntu.com>  Thu, 05 May 2011 15:07:18 -0500
+ -- Philippe Coval <rzr@gna.org>  Tue, 08 Nov 2011 23:59:47 +0100
+
+rsync (3.0.9-1) unstable; urgency=low
+
+  * new upstream release.
+  * Bumped Standards-Version to 3.9.2.0 (no change necessary).
+  * manpage no longer shows erroneous default for --delete-before.
+    (upstream fix)
+    closes:#640869,#587567
+  * manpage now mentions that --files-from sorts the filenames.
+    (upstream fix)
+    closes:#536755
+  * init.d script checks nice value correctly now.
+    closes:#586707
+  * fixed typo in comment in sample script rrsync.
+    closes:#635603
+  * Updated package description and included homepage line.
+    closes:#614098
+  * Correct error message when using --delete-delay when dying in certain cases.
+    See also #587567
+    closes:#586551
+  * included rsync.service file for systemd, supplied by Michael Stapelberg.
+    closes:#639632
+  * conflict with duplicity < 0.6.11 as that tries to use rsync:// in
+    combination with ::module syntax, which is not allowed (but used to be
+    accepted in older rsync versions).
+    closes:#605731
+
+ -- Paul Slootman <paul@debian.org>  Tue, 04 Oct 2011 18:54:56 +0200
+
+rsync (3.0.9~pre2-2) experimental; urgency=low
+
+  * updated lintian override. This is a modified version optimized for the
+    rsync protocol. I.e. the standard zlib version will not work as well.
+  * included rsync.service file supplied by Michael Stapelberg,
+    see bug#639632
+
+ -- Paul Slootman <paul@debian.org>  Tue, 13 Sep 2011 15:52:42 +0200
+
+rsync (3.0.9~pre2-1) experimental; urgency=low
+
+  * new upstream prerelease.
+
+ -- Paul Slootman <paul@debian.org>  Tue, 13 Sep 2011 15:03:03 +0200
 
 rsync (3.0.8-1) unstable; urgency=low
 
@@ -14,30 +54,6 @@ rsync (3.0.8-1) unstable; urgency=low
   * Bumped Standards-Version to 3.9.1.0 (no change necessary).
 
  -- Paul Slootman <paul@debian.org>  Thu, 14 Apr 2011 15:10:52 +0200
-
-rsync (3.0.7-2ubuntu3) natty; urgency=low
-
-  * SECURITY UPDATE: denial of service and possible arbitrary code
-    execution via malformed data
-    - debian/patches/security-CVE-2011-1097.diff: introduce and use
-      FLAG_OWNED_BY_US in flist.c, generator.c, log.c, rsync.*. 
-    - CVE-2011-1097
-
- -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 08 Apr 2011 09:53:11 -0400
-
-rsync (3.0.7-2ubuntu2) natty; urgency=low
-
-  * No-change upload to reduce changelogs.
-
- -- Martin Pitt <martin.pitt@ubuntu.com>  Mon, 13 Dec 2010 12:39:26 +0100
-
-rsync (3.0.7-2ubuntu1) maverick; urgency=low
-
-  * Merge from debian unstable. (LP: #588161)  Remaining changes:
-    - Correct error message when using --delete-delay (LP: #516241), patch
-      originally from Jonas Pedersen
-
- -- Jean-Louis Dupond <jean-louis@dupond.be>  Wed, 05 May 2010 03:21:22 +0100
 
 rsync (3.0.7-2) unstable; urgency=low
 
@@ -49,13 +65,6 @@ rsync (3.0.7-2) unstable; urgency=low
   * Bumped Standards-Version to 3.8.4 (no chenge necessary).
 
  -- Paul Slootman <paul@debian.org>  Wed, 17 Feb 2010 17:38:22 +0100
-
-rsync (3.0.7-1ubuntu1) lucid; urgency=low
-
-  * Correct error message when using --delete-delay (LP: #516241), patch
-    originally from Jonas Pedersen
-
- -- Thierry Carrez <thierry.carrez@ubuntu.com>  Tue, 30 Mar 2010 10:41:28 +0200
 
 rsync (3.0.7-1) unstable; urgency=low
 
@@ -1041,4 +1050,5 @@ rsync (1.6.2-1) unstable; urgency=low
   * Initial Release
 
  -- Philip Hands <phil@hands.com>  Wed, 9 Oct 1996 23:45:08 +0100
+
 

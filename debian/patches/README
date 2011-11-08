@@ -10,6 +10,7 @@ ssh-6-option.diff       - call ssh with -6 option if rsync was called with -6,
                           ditto with -4
 rsyncd.conf.5.comment.diff - explain that a hash can only be at the beginning
                              of a line.
+delete-delay.diff	- correct the error message given
 
 These are patches from the development branch that I consider important
 enough to include now:

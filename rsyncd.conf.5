@@ -1,6 +1,6 @@
-.TH "rsyncd.conf" "5" "26 Mar 2011" "" ""
+.TH "rsyncd.conf" "5" "23 Sep 2011" "" ""
 .SH "NAME"
-rsyncd.conf \(em configuration file for rsync in daemon mode
+rsyncd.conf \- configuration file for rsync in daemon mode
 .SH "SYNOPSIS"
 
 .PP 
@@ -142,6 +142,12 @@ of available modules. The default is no comment.
 This parameter specifies the directory in the daemon\(cq\&s
 filesystem to make available in this module.  You must specify this parameter
 for each module in \f(CWrsyncd.conf\fP.
+.IP 
+It is fine if the path includes internal spaces \-\- they will be retained
+verbatim (which means that you shouldn\(cq\&t try to escape them).  If your final
+directory has a trailing space (and this is somehow not something you wish to
+fix), append a trailing slash to the path to avoid losing the trailing
+whitespace.
 .IP 
 .IP "\fBuse chroot\fP"
 If \(dq\&use chroot\(dq\& is true, the rsync daemon will chroot
@@ -376,7 +382,7 @@ subtree; the easiest way to do this is with a triple\-star pattern like
 .IP 
 The \(dq\&filter\(dq\& parameter takes a space\-separated list of daemon filter rules,
 though it is smart enough to know not to split a token at an internal space in
-a rule (e.g. \(dq\&\- /foo  \(em /bar\(dq\& is parsed as two rules).  You may specify one or
+a rule (e.g. \(dq\&\- /foo  \- /bar\(dq\& is parsed as two rules).  You may specify one or
 more merge\-file rules using the normal syntax.  Only one \(dq\&filter\(dq\& parameter can
 apply to a given module in the config file, so put all the rules you want in a
 single parameter.  Note that per\-directory merge\-file rules do not provide as
@@ -822,7 +828,7 @@ http://rsync.samba.org/
 .SH "VERSION"
 
 .PP 
-This man page is current for version 3.0.8 of rsync.
+This man page is current for version 3.0.9 of rsync.
 .PP 
 .SH "CREDITS"
 

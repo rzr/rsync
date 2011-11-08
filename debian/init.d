@@ -43,7 +43,7 @@ if [ -s $RSYNC_DEFAULTS_FILE ]; then
     esac
     case "x$RSYNC_NICE" in
 	x[0-9])		RSYNC_NICE_PARM="--nicelevel $RSYNC_NICE";;
-	x[1-9][0-9])	RSYNC_NICE_PARM="--nicelevel $RSYNC_NICE";;
+	x1[0-9])	RSYNC_NICE_PARM="--nicelevel $RSYNC_NICE";;
 	x)		;;
 	*)		log_warning_msg "Value of RSYNC_NICE in $RSYNC_DEFAULTS_FILE must be a value between 0 and 19 (inclusive);"
 			log_warning_msg "ignoring RSYNC_NICE now."

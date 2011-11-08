@@ -1,3 +1,5 @@
+error message when using --delete-delay is not correct.
+
 diff -Naur rsync-3.0.7/flist.c rsync-3.0.7-patch/flist.c
 --- rsync-3.0.7/flist.c	2009-12-21 23:40:41.000000000 +0100
 +++ rsync-3.0.7-patch/flist.c	2010-02-02 21:49:05.167469731 +0100

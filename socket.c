@@ -26,8 +26,12 @@
 
 #include "rsync.h"
 #include "ifuncs.h"
+#ifdef HAVE_NETINET_IN_SYSTM_H
 #include <netinet/in_systm.h>
+#endif
+#ifdef HAVE_NETINET_IP_H
 #include <netinet/ip.h>
+#endif
 #include <netinet/tcp.h>
 
 extern char *bind_address;
@@ -297,22 +301,29 @@ int open_socket_out(char *host, int port, const char *bind_addr,
 			s = -1;
 			continue;
 		}
+		if (verbose >= 3) {
+			char buf[2048];
+			if ((error = getnameinfo(res->ai_addr, res->ai_addrlen, buf, sizeof buf, NULL, 0, NI_NUMERICHOST)) != 0)
+				snprintf(buf, sizeof buf, "*getnameinfo failure: %s*", gai_strerror(error));
+			rprintf(FINFO, "Connected to %s (%s)\n", h, buf);
+		}
 		break;
 	}
-	freeaddrinfo(res0);
 
-	if (s < 0) {
+	if (s < 0 || verbose >= 3) {
 		char buf[2048];
 		for (res = res0, j = 0; res; res = res->ai_next, j++) {
 			if (errnos[j] == 0)
 				continue;
-			if (inet_ntop(res->ai_family, res->ai_addr->sa_data + 2, buf, sizeof buf) == NULL)
-				strlcpy(buf, "*inet_ntop failed*", sizeof buf);
+			if ((error = getnameinfo(res->ai_addr, res->ai_addrlen, buf, sizeof buf, NULL, 0, NI_NUMERICHOST)) != 0)
+				snprintf(buf, sizeof buf, "*getnameinfo failure: %s*", gai_strerror(error));
 			rsyserr(FERROR, errnos[j], "failed to connect to %s (%s)", h, buf);
 		}
-		s = -1;
+		if (s < 0)
+			s = -1;
 	}
 
+	freeaddrinfo(res0);
 	free(errnos);
 
 	return s;
@@ -635,7 +646,9 @@ struct
 } socket_options[] = {
   {"SO_KEEPALIVE",      SOL_SOCKET,    SO_KEEPALIVE,    0,                 OPT_BOOL},
   {"SO_REUSEADDR",      SOL_SOCKET,    SO_REUSEADDR,    0,                 OPT_BOOL},
+#ifdef SO_BROADCAST
   {"SO_BROADCAST",      SOL_SOCKET,    SO_BROADCAST,    0,                 OPT_BOOL},
+#endif
 #ifdef TCP_NODELAY
   {"TCP_NODELAY",       IPPROTO_TCP,   TCP_NODELAY,     0,                 OPT_BOOL},
 #endif

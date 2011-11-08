@@ -9,8 +9,8 @@ This package was put together by Philip Hands <phil@hands.com>,
 from sources obtained from:
   http://rsync.samba.org/ftp/rsync/rsync-2.5.4.tar.gz
 The current version was downloaded from:
-  http://rsync.samba.org/ftp/rsync/src/rsync-3.0.8.tar.gz
-on 2011-04-14 by Paul Slootman <paul@debian.org> .
+  http://rsync.samba.org/ftp/rsync/src-previews/rsync-3.0.9pre2.tar.gz
+on 2011-09-13 by Paul Slootman <paul@debian.org> .
 
 The changes were very minimal - merely adding support for the Debian
 package maintenance scheme by adding various debian/* files.
