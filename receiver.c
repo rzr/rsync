@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1996-2000 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
- * Copyright (C) 2003-2008 Wayne Davison
+ * Copyright (C) 2003-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@
 extern int verbose;
 extern int dry_run;
 extern int do_xfers;
+extern int am_root;
 extern int am_server;
 extern int do_progress;
 extern int inc_recurse;
@@ -53,40 +54,39 @@ extern mode_t orig_umask;
 extern struct stats stats;
 extern char *tmpdir;
 extern char *partial_dir;
-extern char *basis_dir[];
+extern char *basis_dir[MAX_BASIS_DIRS+1];
 extern struct file_list *cur_flist, *first_flist, *dir_flist;
 extern struct filter_list_struct daemon_filter_list;
 
 static struct bitbag *delayed_bits = NULL;
 static int phase = 0, redoing = 0;
+static flist_ndx_list batch_redo_list;
 /* We're either updating the basis file or an identical copy: */
 static int updating_basis_or_equiv;
 
-/*
- * get_tmpname() - create a tmp filename for a given filename
- *
- *   If a tmpdir is defined, use that as the directory to
- *   put it in.  Otherwise, the tmp filename is in the same
- *   directory as the given name.  Note that there may be no
- *   directory at all in the given name!
- *
- *   The tmp filename is basically the given filename with a
- *   dot prepended, and .XXXXXX appended (for mkstemp() to
- *   put its unique gunk in).  Take care to not exceed
- *   either the MAXPATHLEN or NAME_MAX, esp. the last, as
- *   the basename basically becomes 8 chars longer. In that
- *   case, the original name is shortened sufficiently to
- *   make it all fit.
- *
- *   Of course, there's no real reason for the tmp name to
- *   look like the original, except to satisfy us humans.
- *   As long as it's unique, rsync will work.
- */
+#define TMPNAME_SUFFIX ".XXXXXX"
+#define TMPNAME_SUFFIX_LEN ((int)sizeof TMPNAME_SUFFIX - 1)
 
+/* get_tmpname() - create a tmp filename for a given filename
+ *
+ * If a tmpdir is defined, use that as the directory to put it in.  Otherwise,
+ * the tmp filename is in the same directory as the given name.  Note that
+ * there may be no directory at all in the given name!
+ *
+ * The tmp filename is basically the given filename with a dot prepended, and
+ * .XXXXXX appended (for mkstemp() to put its unique gunk in).  We take care
+ * to not exceed either the MAXPATHLEN or NAME_MAX, especially the last, as
+ * the basename basically becomes 8 characters longer.  In such a case, the
+ * original name is shortened sufficiently to make it all fit.
+ *
+ * Of course, the only reason the file is based on the original name is to
+ * make it easier to figure out what purpose a temp file is serving when a
+ * transfer is in progress. */
 int get_tmpname(char *fnametmp, const char *fname)
 {
 	int maxname, added, length = 0;
 	const char *f;
+	char *suf;
 
 	if (tmpdir) {
 		/* Note: this can't overflow, so the return value is safe */
@@ -106,8 +106,9 @@ int get_tmpname(char *fnametmp, const char *fname)
 	fnametmp[length++] = '.';
 
 	/* The maxname value is bufsize, and includes space for the '\0'.
-	 * (Note that NAME_MAX get -8 for the leading '.' above.) */
-	maxname = MIN(MAXPATHLEN - 7 - length, NAME_MAX - 8);
+	 * NAME_MAX needs an extra -1 for the name's leading dot. */
+	maxname = MIN(MAXPATHLEN - length - TMPNAME_SUFFIX_LEN,
+		      NAME_MAX - 1 - TMPNAME_SUFFIX_LEN);
 
 	if (maxname < 1) {
 		rprintf(FERROR_XFER, "temporary filename too long: %s\n", fname);
@@ -118,7 +119,17 @@ int get_tmpname(char *fnametmp, const char *fname)
 	added = strlcpy(fnametmp + length, f, maxname);
 	if (added >= maxname)
 		added = maxname - 1;
-	memcpy(fnametmp + length + added, ".XXXXXX", 8);
+	suf = fnametmp + length + added;
+
+	/* Trim any dangling high-bit chars if the first-trimmed char (if any) is
+	 * also a high-bit char, just in case we cut into a multi-byte sequence.
+	 * We are guaranteed to stop because of the leading '.' we added. */
+	if ((int)f[added] & 0x80) {
+		while ((int)suf[-1] & 0x80)
+			suf--;
+	}
+
+	memcpy(suf, TMPNAME_SUFFIX, TMPNAME_SUFFIX_LEN+1);
 
 	return 1;
 }
@@ -130,15 +141,25 @@ int get_tmpname(char *fnametmp, const char *fname)
 int open_tmpfile(char *fnametmp, const char *fname, struct file_struct *file)
 {
 	int fd;
+	mode_t added_perms;
 
 	if (!get_tmpname(fnametmp, fname))
 		return -1;
+
+	if (am_root < 0) {
+		/* For --fake-super, the file must be useable by the copying
+		 * user, just like it would be for root. */
+		added_perms = S_IRUSR|S_IWUSR;
+	} else {
+		/* For a normal copy, we need to be able to tweak things like xattrs. */
+		added_perms = S_IWUSR;
+	}
 
 	/* We initially set the perms without the setuid/setgid bits or group
 	 * access to ensure that there is no race condition.  They will be
 	 * correctly updated after the right owner and group info is set.
 	 * (Thanks to snabb@epipe.fi for pointing this out.) */
-	fd = do_mkstemp(fnametmp, file->mode & INITACCESSPERMS);
+	fd = do_mkstemp(fnametmp, (file->mode|added_perms) & INITACCESSPERMS);
 
 #if 0
 	/* In most cases parent directories will already exist because their
@@ -148,7 +169,7 @@ int open_tmpfile(char *fnametmp, const char *fname, struct file_struct *file)
 	    && create_directory_path(fnametmp) == 0) {
 		/* Get back to name with XXXXXX in it. */
 		get_tmpname(fnametmp, fname);
-		fd = do_mkstemp(fnametmp, file->mode & INITACCESSPERMS);
+		fd = do_mkstemp(fnametmp, (file->mode|added_perms) & INITACCESSPERMS);
 	}
 #endif
 
@@ -248,8 +269,9 @@ static int receive_data(int f_in, char *fname_r, int fd_r, OFF_T size_r,
 
 		if (verbose > 3) {
 			rprintf(FINFO,
-				"chunk[%d] of size %ld at %.0f offset=%.0f\n",
-				i, (long)len, (double)offset2, (double)offset);
+				"chunk[%d] of size %ld at %.0f offset=%.0f%s\n",
+				i, (long)len, (double)offset2, (double)offset,
+				updating_basis_or_equiv && offset == offset2 ? " (seek)" : "");
 		}
 
 		if (mapbuf) {
@@ -284,14 +306,16 @@ static int receive_data(int f_in, char *fname_r, int fd_r, OFF_T size_r,
 		goto report_write_error;
 
 #ifdef HAVE_FTRUNCATE
-	if (inplace && fd != -1)
-		ftruncate(fd, offset);
+	if (inplace && fd != -1 && do_ftruncate(fd, offset) < 0) {
+		rsyserr(FERROR_XFER, errno, "ftruncate failed on %s",
+			full_fname(fname));
+	}
 #endif
 
 	if (do_progress)
 		end_progress(total_size);
 
-	if (fd != -1 && offset > 0 && sparse_end(fd) != 0) {
+	if (fd != -1 && offset > 0 && sparse_end(fd, offset) != 0) {
 	    report_write_error:
 		rsyserr(FERROR_XFER, errno, "write failed on %s",
 			full_fname(fname));
@@ -348,25 +372,68 @@ static void handle_delayed_updates(char *local_name)
 	}
 }
 
-static int get_next_gen_ndx(int fd, int next_gen_ndx, int desired_ndx)
+static void no_batched_update(int ndx, BOOL is_redo)
 {
-	while (next_gen_ndx < desired_ndx) {
-		if (next_gen_ndx >= 0) {
-			struct file_struct *file = cur_flist->files[next_gen_ndx];
-			rprintf(FERROR_XFER,
-				"(No batched update for%s \"%s\")\n",
-				file->flags & FLAG_FILE_SENT ? " resend of" : "",
-				f_name(file, NULL));
-		}
-		next_gen_ndx = read_int(fd);
-		if (next_gen_ndx == -1) {
-			if (inc_recurse)
-				next_gen_ndx = first_flist->prev->used + first_flist->prev->ndx_start;
-			else
-				next_gen_ndx = cur_flist->used;
+	struct file_list *flist = flist_for_ndx(ndx, "no_batched_update");
+	struct file_struct *file = flist->files[ndx - flist->ndx_start];
+
+	rprintf(FERROR_XFER, "(No batched update for%s \"%s\")\n",
+		is_redo ? " resend of" : "", f_name(file, NULL));
+
+	if (inc_recurse && !dry_run)
+		send_msg_int(MSG_NO_SEND, ndx);
+}
+
+static int we_want_redo(int desired_ndx)
+{
+	static int redo_ndx = -1;
+
+	while (redo_ndx < desired_ndx) {
+		if (redo_ndx >= 0)
+			no_batched_update(redo_ndx, True);
+		if ((redo_ndx = flist_ndx_pop(&batch_redo_list)) < 0)
+			return 0;
+	}
+
+	if (redo_ndx == desired_ndx) {
+		redo_ndx = -1;
+		return 1;
+	}
+
+	return 0;
+}
+
+static int gen_wants_ndx(int desired_ndx)
+{
+	static int next_ndx = -1;
+	static int done_cnt = 0;
+	static BOOL got_eof = False;
+	int flist_num = first_flist->flist_num;
+
+	if (got_eof)
+		return 0;
+
+	while (next_ndx < desired_ndx) {
+		if (inc_recurse && flist_num <= done_cnt)
+			return 0;
+		if (next_ndx >= 0)
+			no_batched_update(next_ndx, False);
+		if ((next_ndx = read_int(batch_gen_fd)) < 0) {
+			if (inc_recurse) {
+				done_cnt++;
+				continue;
+			}
+			got_eof = True;
+			return 0;
 		}
 	}
-	return next_gen_ndx;
+
+	if (next_ndx == desired_ndx) {
+		next_ndx = -1;
+		return 1;
+	}
+
+	return 0;
 }
 
 /**
@@ -375,7 +442,6 @@ static int get_next_gen_ndx(int fd, int next_gen_ndx, int desired_ndx)
  * Receiver process runs on the same host as the generator process. */
 int recv_files(int f_in, char *local_name)
 {
-	int next_gen_ndx = -1;
 	int fd1,fd2;
 	STRUCT_STAT st;
 	int iflags, xlen;
@@ -410,17 +476,13 @@ int recv_files(int f_in, char *local_name)
 					 xname, &xlen);
 		if (ndx == NDX_DONE) {
 			if (inc_recurse && first_flist) {
+				if (read_batch)
+					gen_wants_ndx(first_flist->used + first_flist->ndx_start);
 				flist_free(first_flist);
 				if (first_flist)
 					continue;
-			}
-			if (read_batch && cur_flist) {
-				int high = inc_recurse
-				    ? first_flist->prev->used + first_flist->prev->ndx_start
-				    : cur_flist->used;
-				get_next_gen_ndx(batch_gen_fd, next_gen_ndx, high);
-				next_gen_ndx = -1;
-			}
+			} else if (read_batch && first_flist)
+				gen_wants_ndx(first_flist->used);
 			if (++phase > max_phase)
 				break;
 			if (verbose > 2)
@@ -441,14 +503,15 @@ int recv_files(int f_in, char *local_name)
 			rprintf(FINFO, "recv_files(%s)\n", fname);
 
 #ifdef SUPPORT_XATTRS
-		if (iflags & ITEM_REPORT_XATTR && !dry_run)
+		if (preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers)
 			recv_xattr_request(file, f_in);
 #endif
 
 		if (!(iflags & ITEM_TRANSFER)) {
 			maybe_log_item(file, iflags, itemizing, xname);
 #ifdef SUPPORT_XATTRS
-			if (preserve_xattrs && iflags & ITEM_REPORT_XATTR && !dry_run)
+			if (preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
+			 && !BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))
 				set_file_attrs(fname, file, NULL, fname, 0);
 #endif
 			continue;
@@ -495,6 +558,21 @@ int recv_files(int f_in, char *local_name)
 			exit_cleanup(RERR_PROTOCOL);
 		}
 
+		if (read_batch) {
+			int wanted = redoing
+				   ? we_want_redo(ndx)
+				   : gen_wants_ndx(ndx);
+			if (!wanted) {
+				rprintf(FINFO,
+					"(Skipping batched update for%s \"%s\")\n",
+					redoing ? " resend of" : "",
+					fname);
+				discard_receive_data(f_in, F_LENGTH(file));
+				file->flags |= FLAG_FILE_SENT;
+				continue;
+			}
+		}
+
 		if (!do_xfers) { /* log the transfer */
 			log_item(FCLIENT, file, &stats, iflags, NULL);
 			if (read_batch)
@@ -506,20 +584,6 @@ int recv_files(int f_in, char *local_name)
 			if (!am_server)
 				discard_receive_data(f_in, F_LENGTH(file));
 			continue;
-		}
-
-		if (read_batch) {
-			next_gen_ndx = get_next_gen_ndx(batch_gen_fd, next_gen_ndx, ndx);
-			if (ndx < next_gen_ndx) {
-				rprintf(FINFO,
-					"(Skipping batched update for \"%s\")\n",
-					fname);
-				discard_receive_data(f_in, F_LENGTH(file));
-				if (inc_recurse)
-					send_msg_int(MSG_NO_SEND, ndx);
-				continue;
-			}
-			next_gen_ndx = -1;
 		}
 
 		partialptr = partial_dir ? partial_dir_fname(fname) : fname;
@@ -719,6 +783,9 @@ int recv_files(int f_in, char *local_name)
 
 		cleanup_disable();
 
+		if (read_batch)
+			file->flags |= FLAG_FILE_SENT;
+
 		switch (recv_ok) {
 		case 2:
 			break;
@@ -751,6 +818,8 @@ int recv_files(int f_in, char *local_name)
 					keptstr, redostr);
 			}
 			if (!redoing) {
+				if (read_batch)
+					flist_ndx_push(&batch_redo_list, ndx);
 				send_msg_int(MSG_REDO, ndx);
 				file->flags |= FLAG_FILE_SENT;
 			} else if (inc_recurse)

@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1996 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
- * Copyright (C) 2004-2008 Wayne Davison
+ * Copyright (C) 2004-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,8 +38,6 @@ extern int numeric_ids;
 #  define GETGROUPS_T gid_t
 # endif
 #endif
-
-#define GID_NONE ((gid_t)-1)
 
 struct idlist {
 	struct idlist *next;
@@ -103,12 +101,12 @@ static gid_t map_gid(gid_t id, const char *name)
 static int is_in_group(gid_t gid)
 {
 #ifdef HAVE_GETGROUPS
-	static gid_t last_in = GID_NONE, last_out;
-	static int ngroups = -2;
+	static gid_t last_in;
+	static int ngroups = -2, last_out = -1;
 	static GETGROUPS_T *gidset;
 	int n;
 
-	if (gid == last_in)
+	if (gid == last_in && last_out >= 0)
 		return last_out;
 	if (ngroups < -1) {
 		gid_t mygid = MY_GID();

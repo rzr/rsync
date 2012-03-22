@@ -5,7 +5,7 @@ AC_CONFIG_SRCDIR([byteorder.h])
 AC_CONFIG_HEADER(config.h)
 AC_PREREQ(2.59)
 
-RSYNC_VERSION=3.0.4
+RSYNC_VERSION=3.0.9
 AC_SUBST(RSYNC_VERSION)
 AC_MSG_NOTICE([Configuring rsync $RSYNC_VERSION])
 
@@ -13,22 +13,7 @@ AC_DEFINE_UNQUOTED(RSYNC_VERSION, ["$RSYNC_VERSION"], [rsync release version])
 
 LDFLAGS=${LDFLAGS-""}
 
-AC_CANONICAL_TARGET([])
-
-dnl Checks for programs.
-AC_PROG_CC
-AC_PROG_CPP
-AC_PROG_EGREP
-AC_PROG_INSTALL
-AC_PROG_CC_STDC
-AC_SUBST(SHELL)
-
-AC_DEFINE([_GNU_SOURCE], 1,
-          [Define _GNU_SOURCE so that we get all necessary prototypes])
-
-if test x"$ac_cv_prog_cc_stdc" = x"no"; then
-	AC_MSG_WARN([rsync requires an ANSI C compiler and you don't seem to have one])
-fi
+AC_CANONICAL_HOST
 
 # We must decide this before testing the compiler.
 
@@ -42,14 +27,27 @@ AC_ARG_ENABLE(debug,
 
 if test x"$enable_debug" = x"no"; then
     AC_MSG_RESULT(no)
-    CFLAGS=${CFLAGS-"-O"}
+    ac_cv_prog_cc_g=no
 else
     AC_MSG_RESULT([yes])
-    # leave CFLAGS alone; AC_PROG_CC will try to include -g if it can
     dnl AC_DEFINE(DEBUG, 1, [Define to turn on debugging code that may slow normal operation])
-    dnl CFLAGS=${CFLAGS-"-g"}
+    # leave ac_cv_prog_cc_g alone; AC_PROG_CC will try to include -g if it can
 fi
 
+dnl Checks for programs.
+AC_PROG_CC
+AC_PROG_CPP
+AC_PROG_EGREP
+AC_PROG_INSTALL
+AC_PROG_CC_STDC
+AC_SUBST(SHELL)
+
+AC_DEFINE([_GNU_SOURCE], 1,
+          [Define _GNU_SOURCE so that we get all necessary prototypes])
+
+if test x"$ac_cv_prog_cc_stdc" = x"no"; then
+	AC_MSG_WARN([rsync requires an ANSI C compiler and you do not seem to have one])
+fi
 
 AC_ARG_ENABLE(profile,
 	AC_HELP_STRING([--enable-profile],
@@ -195,10 +193,10 @@ ipv6trylibc=yes
 
 AC_ARG_ENABLE(ipv6,
 	AC_HELP_STRING([--disable-ipv6],
-		[don't even try to use IPv6]))
+		[do not even try to use IPv6]))
 if test x"$enable_ipv6" != x"no"; then
 	AC_MSG_CHECKING([ipv6 stack type])
-	for i in inria kame linux-glibc linux-inet6 toshiba v6d zeta; do
+	for i in inria kame linux-glibc linux-inet6 solaris toshiba v6d zeta cygwin; do
 		case $i in
 		inria)
 			# http://www.kame.net/
@@ -242,6 +240,16 @@ AC_DEFINE(INET6, 1, [true if you have IPv6])])
 				CFLAGS="-I/usr/inet6/include $CFLAGS"
 			fi
 			;;
+		solaris)
+			# http://www.sun.com
+			AC_EGREP_CPP(yes, [
+#include <netinet/ip6.h>
+#ifdef __sun
+yes
+#endif],
+				[ipv6type=$i;
+				AC_DEFINE(INET6, 1, [true if you have IPv6])])
+			;;
 		toshiba)
 			AC_EGREP_CPP(yes, [
 #include <sys/param.h>
@@ -275,6 +283,15 @@ yes
 				ipv6libdir=/usr/local/v6/lib;
 				AC_DEFINE(INET6, 1, [true if you have IPv6])])
 			;;
+		cygwin)
+			AC_EGREP_CPP(yes, [
+#include <netinet/in.h>
+#ifdef _CYGWIN_IN6_H
+yes
+#endif],
+				[ipv6type=$i;
+				AC_DEFINE(INET6, 1, [true if you have IPv6])])
+			;;
 		esac
 		if test "$ipv6type" != "unknown"; then
 			break
@@ -290,7 +307,7 @@ AC_ARG_ENABLE([locale],
 	AC_HELP_STRING([--disable-locale],
 		[disable locale features]))
 AH_TEMPLATE([CONFIG_LOCALE],
-[Undefine if you don't want locale features.  By default this is defined.])
+[Undefine if you do not want locale features.  By default this is defined.])
 if test x"$enable_locale" != x"no"; then
 	AC_DEFINE(CONFIG_LOCALE)
 fi
@@ -314,7 +331,7 @@ AC_CHECK_HEADERS(sys/fcntl.h sys/select.h fcntl.h sys/time.h sys/unistd.h \
     sys/un.h sys/attr.h mcheck.h arpa/inet.h arpa/nameser.h locale.h \
     netdb.h malloc.h float.h limits.h iconv.h libcharset.h langinfo.h \
     sys/acl.h acl/libacl.h attr/xattr.h sys/xattr.h sys/extattr.h \
-    popt.h popt/popt.h)
+    popt.h popt/popt.h netinet/in_systm.h netinet/ip.h)
 AC_HEADER_MAJOR
 
 AC_CACHE_CHECK([if makedev takes 3 args],rsync_cv_MAKEDEV_TAKES_3_ARGS,[
@@ -411,8 +428,10 @@ fi
 
 AC_SEARCH_LIBS(inet_ntop, resolv)
 
-# Solaris and HP-UX weirdness:
-# Search for libiconv_open (not iconv_open) to discover if -liconv is needed!
+# For OS X, Solaris, HP-UX, etc.: figure out if -liconv is needed.  We'll
+# accept either iconv_open or libiconv_open, since some include files map
+# the former to the latter.
+AC_SEARCH_LIBS(iconv_open, iconv)
 AC_SEARCH_LIBS(libiconv_open, iconv)
 
 AC_MSG_CHECKING([for iconv declaration])
@@ -553,8 +572,9 @@ AC_CHECK_FUNCS(waitpid wait4 getcwd strdup chown chmod lchmod mknod mkfifo \
     memmove lchown vsnprintf snprintf vasprintf asprintf setsid strpbrk \
     strlcat strlcpy strtol mallinfo getgroups setgroups geteuid getegid \
     setlocale setmode open64 lseek64 mkstemp64 mtrace va_copy __va_copy \
-    strerror putenv iconv_open locale_charset nl_langinfo getxattr \
-    extattr_get_link sigaction sigprocmask setattrlist)
+    seteuid strerror putenv iconv_open locale_charset nl_langinfo getxattr \
+    extattr_get_link sigaction sigprocmask setattrlist \
+    utimensat)
 
 dnl cygwin iconv.h defines iconv_open as libiconv_open
 if test x"$ac_cv_func_iconv_open" != x"yes"; then
@@ -566,10 +586,19 @@ if test $ac_cv_func_getpgrp = yes; then
     AC_FUNC_GETPGRP
 fi
 
+AC_ARG_ENABLE(iconv-open,
+    AC_HELP_STRING([--disable-iconv-open],
+	    [disable all use of iconv_open() function]),
+    [], [enable_iconv_open=$ac_cv_func_iconv_open])
+
+if test x"$enable_iconv_open" != x"no"; then
+    AC_DEFINE(USE_ICONV_OPEN, 1, [Define to 1 if you want rsync to make use of iconv_open()])
+fi
+
 AC_ARG_ENABLE(iconv,
     AC_HELP_STRING([--disable-iconv],
 	    [disable rsync's --iconv option]),
-    [], [enable_iconv=$ac_cv_func_iconv_open])
+    [], [enable_iconv=$enable_iconv_open])
 AH_TEMPLATE([ICONV_OPTION],
 [Define if you want the --iconv option.  Specifing a value will set the
 default iconv setting (a NULL means no --iconv processing by default).])
@@ -646,7 +675,11 @@ AC_TRY_RUN([
 
 main() {
        int fd[2];
+#ifdef __CYGWIN__
+       exit(1);
+#else
        exit((socketpair(AF_UNIX, SOCK_STREAM, 0, fd) != -1) ? 0 : 1);
+#endif
 }],
 rsync_cv_HAVE_SOCKETPAIR=yes,rsync_cv_HAVE_SOCKETPAIR=no,rsync_cv_HAVE_SOCKETPAIR=cross)])
 if test x"$rsync_cv_HAVE_SOCKETPAIR" = x"yes"; then
@@ -762,7 +795,7 @@ rsync_cv_HAVE_SECURE_MKSTEMP=yes,
 rsync_cv_HAVE_SECURE_MKSTEMP=no,
 rsync_cv_HAVE_SECURE_MKSTEMP=cross)])
 if test x"$rsync_cv_HAVE_SECURE_MKSTEMP" = x"yes"; then
-    case $target_os in
+    case $host_os in
     hpux*)
 	dnl HP-UX has a broken mkstemp() implementation they refuse to fix,
 	dnl so we noisily skip using it.  See HP change request JAGaf34426
@@ -942,11 +975,17 @@ else
 	AC_MSG_RESULT(Using OS X xattrs)
 	AC_DEFINE(HAVE_OSX_XATTRS, 1, [True if you have Mac OS X xattrs])
 	AC_DEFINE(SUPPORT_XATTRS, 1)
+	AC_DEFINE(NO_DEVICE_XATTRS, 1, [True if device files do not support xattrs])
+	AC_DEFINE(NO_SPECIAL_XATTRS, 1, [True if special files do not support xattrs])
 	;;
     freebsd*)
 	AC_MSG_RESULT(Using FreeBSD extattrs)
 	AC_DEFINE(HAVE_FREEBSD_XATTRS, 1, [True if you have FreeBSD xattrs])
 	AC_DEFINE(SUPPORT_XATTRS, 1)
+	;;
+    solaris*)
+	# Better Solaris support coming in 3.1.0...
+	AC_DEFINE(NO_SYMLINK_XATTRS, 1, [True if symlinks do not support xattrs])
 	;;
     *)
 	if test x"$enable_xattr_support" = x"yes"; then
@@ -962,7 +1001,7 @@ if test x"$enable_acl_support" = x"no" -o x"$enable_xattr_support" = x"no" -o x"
     AC_MSG_CHECKING([whether $CC supports -Wno-unused-parameter])
     OLD_CFLAGS="$CFLAGS"
     CFLAGS="$CFLAGS -Wno-unused-parameter"
-    AC_COMPILE_IFELSE([ ], [rsync_warn_flag=yes], [rsync_warn_flag=no])
+    AC_TRY_LINK([#include <stdio.h>], [printf("hello\n");], [rsync_warn_flag=yes], [rsync_warn_flag=no])
     AC_MSG_RESULT([$rsync_warn_flag])
     if test x"$rsync_warn_flag" = x"no"; then
 	CFLAGS="$OLD_CFLAGS"

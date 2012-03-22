@@ -1,64 +1,56 @@
-NEWS for rsync 3.0.4 (6 Sep 2008)
+NEWS for rsync 3.0.9 (23 Sep 2011)
 Protocol: 30 (unchanged)
-Changes since 3.0.3:
+Changes since 3.0.8:
 
   BUG FIXES:
 
-    - Fixed a bug in the hard-linking code where it would sometimes try to
-      allocate 0 bytes of memory (which fails on some OSes, such as AIX).
+    - Fix a crash bug in checksum scanning when --inplace is used.
 
-    - Fixed the hard-linking of files from a device that has a device number
-      of 0 (which seems to be a common device number on NetBSD).
+    - Fix a hang if a hard-linked file cannot be opened by the sender (e.g.
+      if it has no read permission).
 
-    - Fixed the handling of a --partial-dir that cannot be created.  This
-      particularly impacts the --delay-updates option (since the files cannot
-      be delayed without a partial-dir), and was potentially destructive if
-      the --remove-source-files was also specified.
+    - Fix preservation of a symlink's system xattrs (e.g. selinux) on Linux.
 
-    - Fixed a couple issues in the --fake-super handling of xattrs when the
-      destination files have root-level attributes (e.g. selinux values) that
-      a non-root copy can't affect.
+    - Fix a memory leak in the xattr code.
 
-    - Improved the keep-alive check in the generator to fire consistently in
-      incremental-recursion mode when --timeout is enabled.
+    - Fixed a bug with --delete-excluded when a filter merge file has a rule
+      that specifies a receiver-only side restriction.
 
-    - The --iconv option now converts the content of a symlink too, instead
-      of leaving it in the wrong character-set (requires 3.0.4 on both sides
-      of the transfer).
+    - Fix a bug with the modifying of unwritable directories.
 
-    - When using --iconv, if a filename fails to convert on the receiving side,
-      this no longer makes deletions in the root-dir of the transfer fail
-      silently (the user now gets a warning about deletions being disabled
-      due to IO error as long as --ignore-errors was not specified).
+    - Fix --fake-super's interaction with --link-dest same-file comparisons.
 
-    - When using --iconv, if a server-side receiver can't convert a filename,
-      the error message sent back to the client no longer mangles the name
-      with the wrong charset conversion.
+    - Fix the updating of the curr_dir buffer to avoid a duplicate slash.
 
-    - Fixed a potential alignment issue in the IRIX ACL code when allocating
-      the initial "struct acl" object.  Also, cast mallocs to avoid warnings.
+    - Fix the directory permissions on an implied dot-dir when using --relative
+      (e.g. /outside/path/././send/path).
 
-    - Changed some errors that were going to stdout to go to stderr.
+    - Fixed some too-long sleeping instances when using --bwlimit.
 
-    - Made human_num() and human_dnum() able to output a negative number
-      (rather than outputting a cryptic string of punctuation).
+    - Fixed when symlink ownership difference-checking gets compiled into
+      unchanged_attrs().
 
-  ENHANCEMENTS:
+    - Improved the socket-error reporting when multiple protocols fail.
 
-    - Rsync will avoid sending an -e option to the server if an older protocol
-      is requested (and thus the option would not be useful).  This lets the
-      user specify the --protocol=29 option to access an overly-restrictive
-      server that is rejecting the protocol-30 use of -e to the server.
+    - Fixed a case where a socket error could reference just-freed memory.
 
-    - Improved the message output for an RERR_PARTIAL exit.
+    - Failing to use a password file that was specified on the command-line is
+      now a fatal error.
 
-  DEVELOPER RELATED:
+    - Fix the non-root updating of directories that don't have the read and/or
+      execute permission.
 
-    - The Makefile will not halt for just a timestamp change on the Makefile
-      or the configure files, only for actual changes in content.
+    - Make daemon-excluded file errors more error-like.
 
-    - Changed some commands in the testsuite's xattrs.test that called "rsync"
-      instead of "$RSYNC".
+    - Fix a compilation issue on older C compilers (due to a misplaced var
+      declaration).
 
-    - Enhanced the release scripts to be able to handle a branch release and
-      to do even more consistency checks on the files.
+    - Make configure avoid finding socketpair on cygwin.
+
+    - Avoid trying to reference SO_BROADCAST if the OS doesn't support it.
+
+    - Fix some issues with the post-processing of the man pages.
+
+    - Fixed the user home-dir handling in the support/lsh script.
+
+    - Some minor manpage improvements.

@@ -295,9 +295,8 @@ int getaddrinfo(const char *node,
 					res);
 		} else if (hints.ai_flags & AI_NUMERICHOST) {
 			struct in_addr ip;
-			if (!inet_aton(node, &ip)) {
+			if (inet_pton(AF_INET, node, &ip) <= 0)
 				return EAI_FAIL;
-			}
 			return getaddr_info_single_addr(service,
 					ntohl(ip.s_addr),
 					&hints,
@@ -492,13 +491,10 @@ int getnameinfo(const struct sockaddr *sa, socklen_t salen,
 		return EAI_FAIL;
 	}
 
-	/* We don't support those. */
-	if ((node && !(flags & NI_NUMERICHOST))
-		|| (service && !(flags & NI_NUMERICSERV)))
-		return EAI_FAIL;
-
 	if (node) {
-		return gethostnameinfo(sa, node, nodelen, flags);
+		int ret = gethostnameinfo(sa, node, nodelen, flags);
+		if (ret)
+			return ret;
 	}
 
 	if (service) {

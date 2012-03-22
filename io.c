@@ -4,7 +4,7 @@
  * Copyright (C) 1996-2001 Andrew Tridgell
  * Copyright (C) 1996 Paul Mackerras
  * Copyright (C) 2001, 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2003-2008 Wayne Davison
+ * Copyright (C) 2003-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,7 +36,6 @@
 extern int bwlimit;
 extern size_t bwlimit_writemax;
 extern int io_timeout;
-extern int allowed_lull;
 extern int am_server;
 extern int am_daemon;
 extern int am_sender;
@@ -47,7 +46,7 @@ extern int eol_nulls;
 extern int flist_eof;
 extern int list_only;
 extern int read_batch;
-extern int csum_length;
+extern int compat_flags;
 extern int protect_args;
 extern int checksum_seed;
 extern int protocol_version;
@@ -60,7 +59,8 @@ extern int filesfrom_convert;
 extern iconv_t ic_send, ic_recv;
 #endif
 
-const char phase_unknown[] = "unknown";
+int csum_length = SHORT_SUM_LENGTH; /* initial value */
+int allowed_lull = 0;
 int ignore_timeout = 0;
 int batch_fd = -1;
 int msgdone_cnt = 0;
@@ -119,21 +119,34 @@ static char int_byte_extra[64] = {
 
 enum festatus { FES_SUCCESS, FES_REDO, FES_NO_SEND };
 
+static void check_timeout(void)
+{
+	time_t t, chk;
+
+	if (!io_timeout || ignore_timeout)
+		return;
+
+	t = time(NULL);
+
+	if (!last_io_in)
+		last_io_in = t;
+
+	chk = MAX(last_io_out, last_io_in);
+	if (t - chk >= io_timeout) {
+		if (am_server || am_daemon)
+			exit_cleanup(RERR_TIMEOUT);
+		rprintf(FERROR, "[%s] io timeout after %d seconds -- exiting\n",
+			who_am_i(), (int)(t-chk));
+		exit_cleanup(RERR_TIMEOUT);
+	}
+}
+
 static void readfd(int fd, char *buffer, size_t N);
 static void writefd(int fd, const char *buf, size_t len);
 static void writefd_unbuffered(int fd, const char *buf, size_t len);
 static void mplex_write(int fd, enum msgcode code, const char *buf, size_t len, int convert);
 
-struct flist_ndx_item {
-	struct flist_ndx_item *next;
-	int ndx;
-};
-
-struct flist_ndx_list {
-	struct flist_ndx_item *head, *tail;
-};
-
-static struct flist_ndx_list redo_list, hlink_list;
+static flist_ndx_list redo_list, hlink_list;
 
 struct msg_list_item {
 	struct msg_list_item *next;
@@ -146,39 +159,6 @@ struct msg_list {
 };
 
 static struct msg_list msg_queue;
-
-static void flist_ndx_push(struct flist_ndx_list *lp, int ndx)
-{
-	struct flist_ndx_item *item;
-
-	if (!(item = new(struct flist_ndx_item)))
-		out_of_memory("flist_ndx_push");
-	item->next = NULL;
-	item->ndx = ndx;
-	if (lp->tail)
-		lp->tail->next = item;
-	else
-		lp->head = item;
-	lp->tail = item;
-}
-
-static int flist_ndx_pop(struct flist_ndx_list *lp)
-{
-	struct flist_ndx_item *next;
-	int ndx;
-
-	if (!lp->head)
-		return -1;
-
-	ndx = lp->head->ndx;
-	next = lp->head->next;
-	free(lp->head);
-	lp->head = next;
-	if (!next)
-		lp->tail = NULL;
-
-	return ndx;
-}
 
 static void got_flist_entry_status(enum festatus status, const char *buf)
 {
@@ -197,44 +177,30 @@ static void got_flist_entry_status(enum festatus status, const char *buf)
 	case FES_SUCCESS:
 		if (remove_source_files)
 			send_msg(MSG_SUCCESS, buf, 4, 0);
+		/* FALL THROUGH */
+	case FES_NO_SEND:
+#ifdef SUPPORT_HARD_LINKS
 		if (preserve_hard_links) {
 			struct file_struct *file = flist->files[ndx - flist->ndx_start];
 			if (F_IS_HLINKED(file)) {
+				if (status == FES_NO_SEND)
+					flist_ndx_push(&hlink_list, -2); /* indicates a failure follows */
 				flist_ndx_push(&hlink_list, ndx);
 				flist->in_progress++;
 			}
 		}
+#endif
 		break;
 	case FES_REDO:
+		if (read_batch) {
+			if (inc_recurse)
+				flist->in_progress++;
+			break;
+		}
 		if (inc_recurse)
 			flist->to_redo++;
 		flist_ndx_push(&redo_list, ndx);
 		break;
-	case FES_NO_SEND:
-		break;
-	}
-}
-
-static void check_timeout(void)
-{
-	time_t t;
-
-	if (!io_timeout || ignore_timeout)
-		return;
-
-	if (!last_io_in) {
-		last_io_in = time(NULL);
-		return;
-	}
-
-	t = time(NULL);
-
-	if (t - last_io_in >= io_timeout) {
-		if (!am_server && !am_daemon) {
-			rprintf(FERROR, "io timeout after %d seconds -- exiting\n",
-				(int)(t-last_io_in));
-		}
-		exit_cleanup(RERR_TIMEOUT);
 	}
 }
 
@@ -249,13 +215,15 @@ void io_set_sock_fds(int f_in, int f_out)
 void set_io_timeout(int secs)
 {
 	io_timeout = secs;
+	allowed_lull = (io_timeout + 1) / 2;
 
-	if (!io_timeout || io_timeout > SELECT_TIMEOUT)
+	if (!io_timeout || allowed_lull > SELECT_TIMEOUT)
 		select_timeout = SELECT_TIMEOUT;
 	else
-		select_timeout = io_timeout;
+		select_timeout = allowed_lull;
 
-	allowed_lull = read_batch ? 0 : (io_timeout + 1) / 2;
+	if (read_batch)
+		allowed_lull = 0;
 }
 
 /* Setup the fd used to receive MSG_* messages.  Only needed during the
@@ -484,9 +452,14 @@ static void read_msg_fd(void)
  * this, sender-side deletions were mostly happening at the end. */
 void increment_active_files(int ndx, int itemizing, enum logcode code)
 {
-	/* TODO: tune these limits? */
-	while (active_filecnt >= (active_bytecnt >= 128*1024 ? 10 : 50)) {
+	while (1) {
+		/* TODO: tune these limits? */
+		int limit = active_bytecnt >= 128*1024 ? 10 : 50;
+		if (active_filecnt < limit)
+			break;
 		check_for_finished_files(itemizing, code, 0);
+		if (active_filecnt < limit)
+			break;
 		if (iobuf_out_cnt)
 			io_flush(NORMAL_FLUSH);
 		else
@@ -982,8 +955,8 @@ void maybe_send_keepalive(void)
 	if (time(NULL) - last_io_out >= allowed_lull) {
 		if (!iobuf_out || !iobuf_out_cnt) {
 			if (protocol_version < 29)
-				return; /* there's nothing we can do */
-			if (protocol_version >= 30)
+				send_msg(MSG_DATA, "", 0, 0);
+			else if (protocol_version >= 30)
 				send_msg(MSG_NOOP, "", 0, 0);
 			else {
 				write_int(sock_f_out, cur_flist->used);
@@ -1000,11 +973,13 @@ void start_flist_forward(int f_in)
 	assert(iobuf_out != NULL);
 	assert(iobuf_f_out == msg_fd_out);
 	flist_forward_from = f_in;
+	defer_forwarding_messages++;
 }
 
-void stop_flist_forward()
+void stop_flist_forward(void)
 {
 	flist_forward_from = -1;
+	defer_forwarding_messages--;
 	io_flush(FULL_FLUSH);
 }
 
@@ -1071,6 +1046,8 @@ static int readfd_unbuffered(int fd, char *buf, size_t len)
 			iobuf_in_ndx = 0;
 			break;
 		case MSG_NOOP:
+			if (msg_bytes != 0)
+				goto invalid_msg;
 			if (am_sender)
 				maybe_send_keepalive();
 			break;
@@ -1089,7 +1066,6 @@ static int readfd_unbuffered(int fd, char *buf, size_t len)
 				xbuf outbuf, inbuf;
 				char ibuf[512];
 				int add_null = 0;
-				int pos = 0;
 
 				INIT_CONST_XBUF(outbuf, line);
 				INIT_XBUF(inbuf, ibuf, 0, -1);
@@ -1104,7 +1080,6 @@ static int readfd_unbuffered(int fd, char *buf, size_t len)
 					if (iconvbufs(ic_send, &inbuf, &outbuf,
 					    ICB_INCLUDE_BAD | ICB_INCLUDE_INCOMPLETE) < 0)
 						goto overflow;
-					pos = -1;
 				}
 				if (add_null) {
 					if (outbuf.len == outbuf.size)
@@ -1429,7 +1404,7 @@ static void sleep_for_bwlimit(int bytes_written)
 	if (prior_tv.tv_sec) {
 		elapsed_usec = (start_tv.tv_sec - prior_tv.tv_sec) * ONE_SEC
 			     + (start_tv.tv_usec - prior_tv.tv_usec);
-		total_written -= elapsed_usec * bwlimit / (ONE_SEC/1024);
+		total_written -= (int64)elapsed_usec * bwlimit / (ONE_SEC/1024);
 		if (total_written < 0)
 			total_written = 0;
 	}
@@ -1448,6 +1423,22 @@ static void sleep_for_bwlimit(int bytes_written)
 	elapsed_usec = (prior_tv.tv_sec - start_tv.tv_sec) * ONE_SEC
 		     + (prior_tv.tv_usec - start_tv.tv_usec);
 	total_written = (sleep_usec - elapsed_usec) * bwlimit / (ONE_SEC/1024);
+}
+
+static const char *what_fd_is(int fd)
+{
+	static char buf[20];
+
+	if (fd == sock_f_out)
+		return "socket";
+	else if (fd == msg_fd_out)
+		return "message fd";
+	else if (fd == batch_fd)
+		return "batch file";
+	else {
+		snprintf(buf, sizeof buf, "fd %d", fd);
+		return buf;
+	}
 }
 
 /* Write len bytes to the file descriptor fd, looping as necessary to get
@@ -1528,8 +1519,8 @@ static void writefd_unbuffered(int fd, const char *buf, size_t len)
 			if (am_server && fd == msg_fd_out)
 				exit_cleanup(RERR_STREAMIO);
 			rsyserr(FERROR, errno,
-				"writefd_unbuffered failed to write %ld bytes [%s]",
-				(long)len, who_am_i());
+				"writefd_unbuffered failed to write %ld bytes to %s [%s]",
+				(long)len, what_fd_is(fd), who_am_i());
 			/* If the other side is sending us error messages, try
 			 * to grab any messages they sent before they died. */
 			while (!am_server && fd == sock_f_out && io_multiplexing_in) {
@@ -1587,10 +1578,8 @@ static void writefd(int fd, const char *buf, size_t len)
 	if (fd == sock_f_out)
 		stats.total_written += len;
 
-	if (fd == write_batch_monitor_out) {
-		if ((size_t)write(batch_fd, buf, len) != len)
-			exit_cleanup(RERR_FILEIO);
-	}
+	if (fd == write_batch_monitor_out)
+		writefd_unbuffered(batch_fd, buf, len);
 
 	if (!iobuf_out || fd != iobuf_f_out) {
 		writefd_unbuffered(fd, buf, len);
@@ -1914,7 +1903,7 @@ void start_write_batch(int fd)
 	 * is involved. */
 	write_int(batch_fd, protocol_version);
 	if (protocol_version >= 30)
-		write_byte(batch_fd, inc_recurse);
+		write_byte(batch_fd, compat_flags);
 	write_int(batch_fd, checksum_seed);
 
 	if (am_sender)

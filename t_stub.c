@@ -3,7 +3,7 @@
  * functions, so that module test harnesses can run standalone.
  *
  * Copyright (C) 2001, 2002 Martin Pool <mbp@samba.org>
- * Copyright (C) 2003-2008 Wayne Davison
+ * Copyright (C) 2003-2009 Wayne Davison
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@ int module_id = -1;
 int relative_paths = 0;
 int human_readable = 0;
 int module_dirlen = 0;
+int preserve_times = 0;
 int preserve_xattrs = 0;
 mode_t orig_umask = 002;
 char *partial_dir;
