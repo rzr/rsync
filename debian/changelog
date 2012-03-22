@@ -1,9 +1,21 @@
+rsync (3.0.9-1ubuntu1.0~rzr1) harmattan; urgency=low
+
+  * WIP: http://rzr.online.fr/q/rsync
+
+ -- Philippe Coval <rzr@gna.org>  Thu, 22 Mar 2012 07:31:03 +0100
+
 rsync (3.0.9-1.0~rzr1) lucid; urgency=low
 
   * Non-maintainer upload.
   * http://rzr.online.fr/q/harmattan
 
  -- Philippe Coval <rzr@gna.org>  Tue, 08 Nov 2011 23:59:47 +0100
+
+rsync (3.0.9-1ubuntu1) precise; urgency=low
+
+  * Mark rsync Multi-Arch: foreign.
+
+ -- Steve Langasek <steve.langasek@ubuntu.com>  Tue, 08 Nov 2011 10:56:28 -0800
 
 rsync (3.0.9-1) unstable; urgency=low
 
@@ -1050,5 +1062,3 @@ rsync (1.6.2-1) unstable; urgency=low
   * Initial Release
 
  -- Philip Hands <phil@hands.com>  Wed, 9 Oct 1996 23:45:08 +0100
-
-

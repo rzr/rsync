@@ -1,8 +1,10 @@
 Source: rsync
-Section: net
+Section: user/network
+XSBC-Original-Section: net
 Priority: optional
 Maintainer: Philippe Coval <rzr@gna.org>
-X-Original-Maintainer: Paul Slootman <paul@debian.org>
+XSBC-Ubuntu-Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+XSBC-Original-Maintainer: Paul Slootman <paul@debian.org>
 Build-Depends: libpopt-dev,libacl1-dev,libattr1-dev
 Standards-Version: 3.9.2.0
 Homepage: http://rsync.samba.org/
@@ -11,6 +13,7 @@ Package: rsync
 Architecture: any
 X-Original-Depends: ${shlibs:Depends}, lsb-base (>= 3.2-14), base-files (>= 4.0.1)
 Depends: ${shlibs:Depends}, lsb-base, base-files
+Multi-Arch: foreign
 Conflicts: duplicity (<< 0.6.11)
 Suggests: openssh-client, openssh-server
 Description: fast, versatile, remote (and local) file-copying tool
